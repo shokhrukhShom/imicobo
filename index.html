@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iMicobo · Sing your favorite karaoke online!</title>
+<style>
+  :root{
+    --bg:#0a0c10; --bg2:#0d1017; --panel:#141922; --panel2:#1b2230; --line:#2a3340;
+    --ink:#e8eef5; --dim:#8593a5; --accent:#5eead4; --accent2:#22d3ee;
+    --warn:#fbbf24; --bad:#f87171;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  a{color:inherit}
+  img{display:block}
+
+  /* ---------- nav ---------- */
+  .nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:18px;
+    padding:14px 22px;background:rgba(10,12,16,.86);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:baseline;gap:8px;font-weight:750;font-size:20px;
+    letter-spacing:.3px;cursor:pointer;white-space:nowrap}
+  .brand .dot{color:var(--accent)}
+  .tag{color:var(--dim);font-size:13px;white-space:nowrap}
+  .nav-spacer{flex:1}
+  .nav a.link,.nav button.link{background:none;border:none;color:var(--dim);
+    font:inherit;font-size:14px;cursor:pointer;padding:8px 10px;border-radius:9px;
+    text-decoration:none;white-space:nowrap}
+  .nav a.link:hover,.nav button.link:hover{color:var(--ink);background:var(--panel2)}
+  .coffee{background:var(--accent)!important;color:#06231f!important;font-weight:650;
+    padding:8px 14px!important}
+  .coffee:hover{filter:brightness(1.07)}
+
+  /* ---------- hero + search ---------- */
+  .hero{padding:44px 22px 26px;text-align:center;
+    background:radial-gradient(1200px 340px at 50% -60px,rgba(94,234,212,.10),transparent)}
+  .hero h1{font-size:clamp(26px,4vw,40px);font-weight:750;margin:0 0 8px}
+  .hero p{color:var(--dim);margin:0 0 22px;font-size:16px}
+  .search{display:flex;max-width:640px;margin:0 auto;gap:0;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.35)}
+  .search:focus-within{border-color:var(--accent)}
+  .search input{flex:1;background:none;border:none;color:var(--ink);
+    font:inherit;font-size:16px;padding:15px 18px;outline:none}
+  .search input::placeholder{color:var(--dim)}
+  .search button{background:var(--accent);color:#06231f;border:none;font:600 15px inherit;
+    padding:0 22px;cursor:pointer}
+  .search button:hover{filter:brightness(1.07)}
+
+  /* ---------- rows ---------- */
+  main{padding:6px 0 60px}
+  .row{margin:26px 0}
+  .row h2{font-size:18px;margin:0 0 12px;padding:0 22px;display:flex;align-items:center;gap:10px}
+  .row h2 .count{color:var(--dim);font-size:13px;font-weight:400}
+  .track{display:flex;gap:14px;overflow-x:auto;padding:2px 22px 12px;
+    scroll-snap-type:x proximity;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+  .track::-webkit-scrollbar{height:8px}
+  .track::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px}
+  .card{scroll-snap-align:start;flex:0 0 auto;width:190px;cursor:pointer;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    overflow:hidden;transition:.16s;position:relative}
+  .card:hover{transform:translateY(-3px);border-color:var(--accent);
+    box-shadow:0 10px 26px rgba(0,0,0,.4)}
+  .card .thumb{height:112px;background:
+    linear-gradient(135deg,var(--panel2),#0e1420);
+    display:grid;place-items:center;position:relative;overflow:hidden}
+  .card .thumb img{width:100%;height:100%;object-fit:cover}
+  .card .thumb .ic{font-size:30px;opacity:.5}
+  .card .thumb .play{position:absolute;inset:0;display:grid;place-items:center;
+    background:rgba(6,35,31,.0);transition:.16s;font-size:34px;color:#fff;opacity:0}
+  .card:hover .thumb .play{background:rgba(6,15,20,.45);opacity:1}
+  .card .meta{padding:11px 12px 13px}
+  .card .t{font-weight:600;font-size:14px;line-height:1.3;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .card .a{color:var(--dim);font-size:12.5px;margin-top:3px;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .empty{color:var(--dim);font-size:14px;padding:0 22px}
+  .pill{display:inline-block;font-size:11px;color:var(--accent);
+    border:1px solid rgba(94,234,212,.35);border-radius:999px;padding:2px 8px;margin-left:4px}
+
+  /* ---------- player overlay ---------- */
+  .overlay{position:fixed;inset:0;z-index:100;background:rgba(4,6,9,.9);
+    backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;padding:22px}
+  .overlay.show{display:flex}
+  .player{width:min(1000px,100%);background:var(--panel);border:1px solid var(--line);
+    border-radius:16px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.6)}
+  .player .bar{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line)}
+  .player .bar .t{font-weight:650;font-size:16px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .player .bar .mic{font-size:13px;color:var(--dim)}
+  .player .bar .mic a{color:var(--accent);text-decoration:none}
+  .player .bar button{background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    font:600 14px inherit;border-radius:10px;padding:9px 16px;cursor:pointer}
+  .player .bar button:hover{border-color:var(--accent)}
+  .player .video{position:relative;background:#000;aspect-ratio:16/9}
+  .player .video iframe,.player .video #ytplayer{position:absolute;inset:0;width:100%;height:100%;border:0}
+  .loading{position:absolute;inset:0;display:grid;place-items:center;color:var(--dim);font-size:14px}
+
+  /* ---------- modal (instructions) ---------- */
+  .modal{position:fixed;inset:0;z-index:110;background:rgba(4,6,9,.86);
+    display:none;align-items:center;justify-content:center;padding:22px}
+  .modal.show{display:flex}
+  .sheet{width:min(560px,100%);max-height:86vh;overflow:auto;background:var(--panel);
+    border:1px solid var(--line);border-radius:16px;padding:26px 26px 28px}
+  .sheet h3{margin:0 0 4px;font-size:20px}
+  .sheet .sub{color:var(--dim);margin:0 0 18px;font-size:14px}
+  .sheet h4{margin:20px 0 6px;font-size:15px;color:var(--accent)}
+  .sheet ol{margin:6px 0;padding-left:20px}
+  .sheet li{margin:6px 0;font-size:14.5px}
+  .sheet .close{margin-top:22px;width:100%;background:var(--accent);color:#06231f;
+    border:none;font:650 15px inherit;border-radius:11px;padding:12px;cursor:pointer}
+  .sheet a.cta{display:inline-block;margin-top:6px;color:var(--accent);text-decoration:none;font-weight:600}
+
+  /* ---------- toast ---------- */
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:200;
+    background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    padding:12px 18px;border-radius:12px;font-size:14px;box-shadow:0 10px 30px rgba(0,0,0,.5);
+    opacity:0;pointer-events:none;transition:.25s;max-width:90vw;text-align:center}
+  .toast.show{opacity:1;bottom:34px}
+
+  @media (max-width:640px){
+    .tag{display:none}
+    .nav a.link.hideMobile{display:none}
+    .card{width:150px}
+    .card .thumb{height:92px}
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="brand" onclick="goHome()"><span>iMic<span class="dot">o</span>bo</span></div>
+  <span class="tag">Sing your favorite karaoke online!</span>
+  <span class="nav-spacer"></span>
+  <button class="link" onclick="openHelp()">🎤 Connect a mic</button>
+  <a class="link hideMobile" href="/connect.html">📱 Pair iPhone</a>
+  <a class="link coffee" id="coffee" href="https://www.buymeacoffee.com/imicobo" target="_blank" rel="noopener">☕ Buy me a coffee</a>
+</nav>
+
+<header class="hero">
+  <h1>Sing your favorite karaoke online!</h1>
+  <p>Free · no account · pick a song and the words are on screen.</p>
+  <form class="search" onsubmit="return doSearch(event)">
+    <input id="q" type="search" placeholder="Search any song…  e.g. Bohemian Rhapsody" autocomplete="off">
+    <button type="submit">Search</button>
+  </form>
+</header>
+
+<main id="main"><!-- rows injected here --></main>
+
+<!-- player overlay -->
+<div class="overlay" id="overlay">
+  <div class="player">
+    <div class="bar">
+      <span class="t" id="nowTitle">—</span>
+      <span class="mic">Mic? <a href="/connect.html" target="_blank">Pair your iPhone →</a></span>
+      <button onclick="closePlayer()">✕ Close</button>
+    </div>
+    <div class="video">
+      <div id="ytplayer"></div>
+      <div class="loading" id="playerLoading">Loading karaoke…</div>
+    </div>
+  </div>
+</div>
+
+<!-- instructions modal -->
+<div class="modal" id="help">
+  <div class="sheet">
+    <h3>Connect a microphone</h3>
+    <p class="sub">Two ways to sing — pick whichever you have.</p>
+
+    <h4>Option A · Use your iPhone as the mic (Wi-Fi)</h4>
+    <ol>
+      <li>Keep this screen open on your computer or TV.</li>
+      <li>Put your <b>iPhone and this computer on the same Wi-Fi</b> — ideally the <b>5&nbsp;GHz</b> band (often named “…-5G”). It has far less lag than 2.4&nbsp;GHz.</li>
+      <li>Open the pairing screen, then scan the QR code or type the 4-digit code on your phone.</li>
+      <li>Sing — your voice comes out of this screen’s speakers, over the music.</li>
+    </ol>
+    <a class="cta" href="/connect.html" target="_blank">Open the iPhone pairing screen →</a>
+
+    <h4>Option B · Plug in a microphone (no lag at all)</h4>
+    <ol>
+      <li>Plug a USB or 3.5&nbsp;mm mic into this computer.</li>
+      <li>Set it as the input in your system sound settings, with “listen/monitor” on so you hear yourself.</li>
+      <li>Hit play on any song and go.</li>
+    </ol>
+
+    <p class="sub" style="margin-top:18px">Tip: if your voice sounds delayed, it’s almost always the Wi-Fi — move closer to the router or switch to the 5&nbsp;GHz network.</p>
+    <button class="close" onclick="closeHelp()">Got it</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================= CATALOG
+   Just song titles + artists — no fragile video IDs to rot. The backend
+   turns each into a real, embeddable YouTube karaoke video on first click
+   and caches it forever, so the library stays alive on its own.          */
+const CATALOG = {
+  "Pop": [
+    ["Shape of You","Ed Sheeran"],["Someone Like You","Adele"],["Rolling in the Deep","Adele"],
+    ["Bad Guy","Billie Eilish"],["Shake It Off","Taylor Swift"],["Blinding Lights","The Weeknd"],
+    ["Firework","Katy Perry"],["Poker Face","Lady Gaga"],["Uptown Funk","Bruno Mars"],
+    ["Just the Way You Are","Bruno Mars"],["Levitating","Dua Lipa"],["Happy","Pharrell Williams"],
+    ["Call Me Maybe","Carly Rae Jepsen"],["Umbrella","Rihanna"],["Wrecking Ball","Miley Cyrus"],
+    ["Since U Been Gone","Kelly Clarkson"],["Teenage Dream","Katy Perry"],["Perfect","Ed Sheeran"],
+    ["Love Story","Taylor Swift"],["Toxic","Britney Spears"]
+  ],
+  "Rock": [
+    ["Bohemian Rhapsody","Queen"],["Sweet Child O' Mine","Guns N' Roses"],["Livin' on a Prayer","Bon Jovi"],
+    ["Don't Stop Believin'","Journey"],["We Will Rock You","Queen"],["Hotel California","Eagles"],
+    ["Wonderwall","Oasis"],["Highway to Hell","AC/DC"],["Back in Black","AC/DC"],
+    ["Born to Run","Bruce Springsteen"],["Africa","Toto"],["More Than a Feeling","Boston"],
+    ["Every Breath You Take","The Police"],["Sweet Home Alabama","Lynyrd Skynyrd"],["Barracuda","Heart"],
+    ["Dream On","Aerosmith"],["I Love Rock 'n' Roll","Joan Jett"],["Summer of '69","Bryan Adams"],
+    ["Paradise City","Guns N' Roses"],["November Rain","Guns N' Roses"]
+  ],
+  "Alternative Rock": [
+    ["Smells Like Teen Spirit","Nirvana"],["Creep","Radiohead"],["Mr. Brightside","The Killers"],
+    ["Zombie","The Cranberries"],["Under the Bridge","Red Hot Chili Peppers"],["Californication","Red Hot Chili Peppers"],
+    ["Boulevard of Broken Dreams","Green Day"],["Basket Case","Green Day"],["In the End","Linkin Park"],
+    ["Numb","Linkin Park"],["Seven Nation Army","The White Stripes"],["Sex on Fire","Kings of Leon"],
+    ["Take Me Out","Franz Ferdinand"],["Come as You Are","Nirvana"],["Black Hole Sun","Soundgarden"],
+    ["1979","The Smashing Pumpkins"],["Everlong","Foo Fighters"],["The Middle","Jimmy Eat World"],
+    ["Song 2","Blur"],["Bittersweet Symphony","The Verve"]
+  ],
+  "Retro 80s": [
+    ["Take On Me","a-ha"],["Sweet Dreams (Are Made of This)","Eurythmics"],["Billie Jean","Michael Jackson"],
+    ["Girls Just Want to Have Fun","Cyndi Lauper"],["Wake Me Up Before You Go-Go","Wham!"],["Livin' on a Prayer","Bon Jovi"],
+    ["Don't Stop Believin'","Journey"],["Every Breath You Take","The Police"],["Total Eclipse of the Heart","Bonnie Tyler"],
+    ["Time After Time","Cyndi Lauper"],["Careless Whisper","George Michael"],["Africa","Toto"],
+    ["I Wanna Dance with Somebody","Whitney Houston"],["Purple Rain","Prince"],["Like a Prayer","Madonna"],
+    ["Material Girl","Madonna"],["Jump","Van Halen"],["Never Gonna Give You Up","Rick Astley"],
+    ["Don't You (Forget About Me)","Simple Minds"],["Faith","George Michael"]
+  ],
+  "Oldies 60s & 70s": [
+    ["Can't Help Falling in Love","Elvis Presley"],["Sweet Caroline","Neil Diamond"],["Stand by Me","Ben E. King"],
+    ["My Girl","The Temptations"],["I Want to Hold Your Hand","The Beatles"],["Hey Jude","The Beatles"],
+    ["Let It Be","The Beatles"],["(Sittin' On) The Dock of the Bay","Otis Redding"],["Respect","Aretha Franklin"],
+    ["Brown Eyed Girl","Van Morrison"],["Bridge Over Troubled Water","Simon & Garfunkel"],["Dancing Queen","ABBA"],
+    ["Mamma Mia","ABBA"],["I Will Survive","Gloria Gaynor"],["Piano Man","Billy Joel"],
+    ["American Pie","Don McLean"],["Take It Easy","Eagles"],["What's Going On","Marvin Gaye"],
+    ["You've Got a Friend","Carole King"],["Y.M.C.A.","Village People"]
+  ],
+  "R&B & Soul": [
+    ["I Will Always Love You","Whitney Houston"],["No Scrubs","TLC"],["Ain't No Mountain High Enough","Marvin Gaye"],
+    ["Superstition","Stevie Wonder"],["I Heard It Through the Grapevine","Marvin Gaye"],["Killing Me Softly","Roberta Flack"],
+    ["Halo","Beyoncé"],["Crazy in Love","Beyoncé"],["Ordinary People","John Legend"],
+    ["Let's Get It On","Marvin Gaye"],["Kiss","Prince"],["Signed, Sealed, Delivered","Stevie Wonder"],
+    ["I Say a Little Prayer","Aretha Franklin"],["Georgia on My Mind","Ray Charles"],["Hit the Road Jack","Ray Charles"],
+    ["End of the Road","Boyz II Men"],["Waterfalls","TLC"],["We Belong Together","Mariah Carey"],
+    ["Rehab","Amy Winehouse"],["Valerie","Amy Winehouse"]
+  ]
+};
+
+const RECENT_KEY = "imicobo.recent.v1";
+const IDCACHE_KEY = "imicobo.idcache.v1";
+const $ = s => document.querySelector(s);
+
+/* ---- tiny client cache of song->videoId so replays are instant ---- */
+const idCache = load(IDCACHE_KEY, {});
+function load(k,d){ try{ return JSON.parse(localStorage.getItem(k)) ?? d }catch(_){ return d } }
+function store(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)) }catch(_){} }
+
+/* ---- recent ---- */
+function getRecent(){ return load(RECENT_KEY, []); }
+function pushRecent(song){
+  let r = getRecent().filter(s => key(s) !== key(song));
+  r.unshift({t:song.t, a:song.a});
+  r = r.slice(0,20);
+  store(RECENT_KEY, r);
+  renderRecent();
+}
+const key = s => (s.t+"|"+s.a).toLowerCase();
+const queryOf = s => `${s.t} ${s.a}`.trim();
+
+/* ============================================================= RENDER */
+function render(){
+  const main = $("#main");
+  main.innerHTML = "";
+  main.appendChild(rowEl("recent", "▶ Recently sung", []));  // filled by renderRecent
+  for(const [genre, songs] of Object.entries(CATALOG)){
+    main.appendChild(rowEl(genre, genre, songs.map(([t,a])=>({t,a}))));
+  }
+  renderRecent();
+}
+
+function rowEl(id, title, songs){
+  const row = document.createElement("section");
+  row.className = "row"; row.dataset.row = id;
+  const h = document.createElement("h2");
+  h.innerHTML = title + (id!=="recent" ? ` <span class="count">${songs.length} songs</span>` : "");
+  row.appendChild(h);
+  const track = document.createElement("div");
+  track.className = "track";
+  songs.forEach(s => track.appendChild(cardEl(s)));
+  row.appendChild(track);
+  return row;
+}
+
+function cardEl(s, withThumb){
+  const c = document.createElement("div");
+  c.className = "card";
+  const vid = idCache[key(s)];
+  const thumb = withThumb && s.thumb
+      ? `<img src="${s.thumb}" alt="" loading="lazy">`
+      : (vid ? `<img src="https://i.ytimg.com/vi/${vid}/mqdefault.jpg" alt="" loading="lazy">`
+             : `<span class="ic">🎵</span>`);
+  c.innerHTML = `<div class="thumb">${thumb}<span class="play">▶</span></div>
+    <div class="meta"><div class="t">${esc(s.t)}</div><div class="a">${esc(s.a||"")}</div></div>`;
+  c.onclick = () => play(s);
+  return c;
+}
+function esc(x){ return (x||"").replace(/[&<>"]/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+
+function renderRecent(){
+  const row = document.querySelector('[data-row="recent"]');
+  if(!row) return;
+  const r = getRecent();
+  row.style.display = r.length ? "" : "none";
+  const track = row.querySelector(".track");
+  track.innerHTML = "";
+  r.forEach(s => track.appendChild(cardEl(s)));
+}
+
+/* ============================================================= PLAY */
+let player=null, ytReady=false, pendingId=null;
+
+function onYouTubeIframeAPIReady(){ ytReady=true; if(pendingId){ const id=pendingId; pendingId=null; startPlayer(id);} }
+
+async function play(song){
+  const q = queryOf(song);
+  pushRecent(song);
+  const cached = idCache[key(song)];
+  openOverlay(song.t + (song.a? " — "+song.a : ""));
+  if(cached){ startPlayer(cached); return; }
+  $("#playerLoading").style.display = "grid";
+  try{
+    const r = await fetch("/resolve?q=" + encodeURIComponent(q));
+    const d = await r.json();
+    if(d.nokey){ closePlayer(); return openOnYouTube(q, "Add a free YouTube key for in-app play — opening YouTube for now."); }
+    if(d.id){
+      idCache[key(song)] = d.id; store(IDCACHE_KEY, idCache);
+      startPlayer(d.id);
+    } else {
+      closePlayer(); openOnYouTube(q, "Couldn't find that one in-app — opening YouTube search.");
+    }
+  }catch(e){
+    closePlayer(); openOnYouTube(q, "Backend offline — opening YouTube search.");
+  }
+}
+
+function startPlayer(id){
+  $("#playerLoading").style.display = "none";
+  if(!ytReady){ pendingId=id; return; }
+  if(player){ try{ player.loadVideoById(id); return; }catch(_){ } }
+  player = new YT.Player("ytplayer", {
+    videoId:id,
+    playerVars:{autoplay:1, rel:0, modestbranding:1, playsinline:1},
+    events:{
+      onReady: e=>e.target.playVideo(),
+      onError: ()=>{ // 100/101/150 = removed or embedding disabled
+        const t = $("#nowTitle").textContent.replace(" — "," ");
+        closePlayer(); openOnYouTube(t, "This video can't be embedded — opening it on YouTube.");
+      }
+    }
+  });
+}
+
+function openOverlay(title){
+  $("#nowTitle").textContent = title;
+  $("#overlay").classList.add("show");
+  document.body.style.overflow="hidden";
+}
+function closePlayer(){
+  $("#overlay").classList.remove("show");
+  document.body.style.overflow="";
+  try{ player && player.stopVideo && player.stopVideo(); }catch(_){}
+}
+function openOnYouTube(q, msg){
+  if(msg) toast(msg);
+  window.open("https://www.youtube.com/results?search_query=" + encodeURIComponent(q + " karaoke"), "_blank", "noopener");
+}
+
+/* ============================================================= SEARCH */
+async function doSearch(ev){
+  ev.preventDefault();
+  const q = $("#q").value.trim();
+  if(!q) return false;
+  const main = $("#main");
+  // results row at top
+  let row = document.querySelector('[data-row="results"]');
+  if(!row){ row = rowEl("results", `Results for “${esc(q)}”`, []); main.prepend(row); }
+  row.querySelector("h2").innerHTML = `Results for “${esc(q)}” <span class="count">searching…</span>`;
+  row.querySelector(".track").innerHTML = "";
+  window.scrollTo({top:0,behavior:"smooth"});
+  try{
+    const r = await fetch("/search?q=" + encodeURIComponent(q));
+    const d = await r.json();
+    if(d.nokey){ row.remove(); return openOnYouTube(q, "Search opens YouTube until a free key is added."), false; }
+    const res = d.results || [];
+    row.querySelector("h2").innerHTML = `Results for “${esc(q)}” <span class="count">${res.length} found</span>`;
+    const track = row.querySelector(".track");
+    if(!res.length){ track.innerHTML = `<div class="empty">No karaoke videos found. <a href="#" onclick="openOnYouTube('${esc(q).replace(/'/g,"")}');return false" style="color:var(--accent)">Try YouTube →</a></div>`; return false; }
+    res.forEach(v=>{
+      const s = {t:v.title, a:v.channel, id:v.id, thumb:v.thumb};
+      idCache[key(s)] = v.id;
+      const card = cardEl(s, true);
+      card.onclick = ()=>{ openOverlay(v.title); startPlayer(v.id); pushRecent({t:v.title,a:v.channel}); };
+      track.appendChild(card);
+    });
+    store(IDCACHE_KEY, idCache);
+  }catch(e){
+    row.remove(); openOnYouTube(q, "Backend offline — opening YouTube search.");
+  }
+  return false;
+}
+
+/* ============================================================= UI bits */
+function goHome(){ const r=document.querySelector('[data-row="results"]'); r&&r.remove(); window.scrollTo({top:0,behavior:"smooth"}); }
+function openHelp(){ $("#help").classList.add("show"); }
+function closeHelp(){ $("#help").classList.remove("show"); }
+let toastT;
+function toast(m){ const el=$("#toast"); el.textContent=m; el.classList.add("show"); clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove("show"),3600); }
+
+document.addEventListener("keydown", e=>{ if(e.key==="Escape"){ closePlayer(); closeHelp(); }});
+$("#overlay").addEventListener("click", e=>{ if(e.target.id==="overlay") closePlayer(); });
+$("#help").addEventListener("click", e=>{ if(e.target.id==="help") closeHelp(); });
+
+render();
+</script>
+<script src="https://www.youtube.com/iframe_api"></script>
+</body>
+</html>
