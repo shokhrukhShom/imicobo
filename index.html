@@ -161,7 +161,7 @@
   <span class="nav-spacer"></span>
   <button class="link" onclick="openHelp()">❔ How to connect</button>
   <button class="link" onclick="MIC.pair()">📱 Pair iPhone</button>
-  <a class="link coffee" id="coffee" href="https://www.buymeacoffee.com/imicobo" target="_blank" rel="noopener">☕ Buy me a coffee</a>
+  <a class="link coffee" id="coffee" href="https://buymeacoffee.com/shokhrukhshom" target="_blank" rel="noopener">☕ Buy me a coffee</a>
 </nav>
 
 <header class="hero">
@@ -299,9 +299,12 @@ const IDCACHE_KEY = "imicobo.idcache.v1";
 const $ = s => document.querySelector(s);
 function load(k,d){ try{ const v=JSON.parse(localStorage.getItem(k)); return v==null?d:v }catch(_){ return d } }
 function store(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)) }catch(_){} }
+const ARTCACHE_KEY = "imicobo.art.v1";
 const idCache = load(IDCACHE_KEY, {});
+const artCache = load(ARTCACHE_KEY, {});
 const key = s => (s.t+"|"+s.a).toLowerCase();
 const queryOf = s => `${s.t} ${s.a}`.trim();
+const ytimg = id => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
 function esc(x){ return (x||"").replace(/[&<>"]/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
 
 /* ---- recent ---- */
@@ -336,15 +339,66 @@ function rowEl(id, title, songs){
 function cardEl(s, withThumb){
   const c = document.createElement("div");
   c.className = "card";
-  const vid = idCache[key(s)];
-  const thumb = withThumb && s.thumb
-      ? `<img src="${s.thumb}" alt="" loading="lazy">`
-      : (vid ? `<img src="https://i.ytimg.com/vi/${vid}/mqdefault.jpg" alt="" loading="lazy">`
-             : `<span class="ic">🎵</span>`);
-  c.innerHTML = `<div class="thumb">${thumb}<span class="play">▶</span></div>
+  c.innerHTML = `<div class="thumb"><span class="play">▶</span></div>
     <div class="meta"><div class="t">${esc(s.t)}</div><div class="a">${esc(s.a||"")}</div></div>`;
   c.onclick = () => play(s);
+  const thumb = c.querySelector(".thumb");
+  // 1) instant colourful cover so a card is NEVER blank/black
+  setCover(thumb, placeholderCover(s));
+  // 2) upgrade to a real cover if we already know one, else lazy-load it
+  const preset = (withThumb && s.thumb) ? s.thumb
+               : (artCache[key(s)] || (idCache[key(s)] ? ytimg(idCache[key(s)]) : null));
+  if(preset){ loadCover(thumb, preset); }
+  else { c._song = s; c._thumb = thumb; artObserver.observe(c); }
   return c;
+}
+/* the always-present <img> in a card thumb */
+function setCover(thumb, url){
+  let img = thumb.querySelector("img.cover");
+  if(!img){ img = new Image(); img.className = "cover"; img.alt = ""; thumb.prepend(img); }
+  img.src = url;
+}
+/* swap in a real cover ONLY if it actually loads (keeps the placeholder otherwise) */
+function loadCover(thumb, url){
+  if(!url) return;
+  const test = new Image();
+  test.onload = () => setCover(thumb, url);
+  test.src = url;
+}
+/* a locally-generated gradient cover — no network, works even offline */
+function hashStr(x){ let h=0; x=x||""; for(let i=0;i<x.length;i++) h=(h*31+x.charCodeAt(i))|0; return Math.abs(h); }
+function placeholderCover(s){
+  const hue = hashStr(s.t || s.a || "x") % 360;
+  const c1 = `hsl(${hue} 48% 34%)`, c2 = `hsl(${(hue+55)%360} 58% 16%)`;
+  let ch = ((s.t || "♪").trim()[0] || "♪").toUpperCase();
+  ch = ch.replace(/[&<>"]/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">`
+    + `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">`
+    + `<stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/></linearGradient></defs>`
+    + `<rect width="300" height="300" fill="url(#g)"/>`
+    + `<text x="150" y="158" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" `
+    + `font-size="150" font-weight="800" fill="rgba(255,255,255,.88)">${ch}</text></svg>`;
+  return "data:image/svg+xml," + encodeURIComponent(svg);
+}
+/* Lazy-load real album covers as cards scroll into view — free (iTunes),
+   no YouTube quota, cached in the browser so it happens once per song. */
+const artObserver = new IntersectionObserver((entries) => {
+  entries.forEach(en => {
+    if(!en.isIntersecting) return;
+    const c = en.target; artObserver.unobserve(c);
+    const s = c._song;
+    fetchArt(s).then(url => {
+      if(url){ artCache[key(s)] = url; store(ARTCACHE_KEY, artCache); loadCover(c._thumb, url); }
+      else { const vid = idCache[key(s)]; if(vid) loadCover(c._thumb, ytimg(vid)); }
+    });
+  });
+}, { rootMargin: "300px" });
+async function fetchArt(s){
+  try{
+    const d = await (await fetch(`/art?t=${encodeURIComponent(s.t)}&a=${encodeURIComponent(s.a||"")}`)).json();
+    return d.url || null;
+  }catch(_){ return null; }
 }
 function renderRecent(){
   const row = document.querySelector('[data-row="recent"]');

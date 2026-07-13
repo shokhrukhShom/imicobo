@@ -116,6 +116,30 @@ def yt_search(query, limit=8):
     return out
 
 
+def itunes_art(title, artist):
+    """Free album artwork from Apple's iTunes Search API — no key, no quota.
+
+    Returns a big square cover URL (served from Apple's CDN, so the browser
+    loads the image directly). None if nothing matches.
+    """
+    term = (artist + " " + title).strip()
+    params = urllib.parse.urlencode({
+        "term": term, "entity": "song", "limit": "1", "country": "US",
+    })
+    url = "https://itunes.apple.com/search?" + params
+    req = urllib.request.Request(url, headers={"User-Agent": "imicobo/1.0"})
+    with urllib.request.urlopen(req, timeout=5) as r:
+        data = json.load(r)
+    items = data.get("results") or []
+    if not items:
+        return None
+    art = items[0].get("artworkUrl100") or items[0].get("artworkUrl60")
+    if not art:
+        return None
+    # bump the thumbnail up to a crisp 400px cover
+    return art.replace("100x100bb", "400x400bb").replace("60x60bb", "400x400bb")
+
+
 class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, status=200):
         body = json.dumps(obj).encode()
@@ -177,6 +201,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"results": res})
             except Exception as e:
                 return self._json({"results": [], "error": str(e)}, 502)
+
+        # ---- karaoke: album artwork for a card (free, no key) ----
+        if p == "/art":
+            t = self._q(u, "t").strip()
+            a = self._q(u, "a").strip()
+            if not t:
+                return self._json({"url": None})
+            ck = "art:" + (t + "|" + a).lower()
+            hit = cache_get(ck)
+            if hit is not None:                     # "" means "looked up, none found"
+                return self._json({"url": hit or None, "cached": True})
+            try:
+                art = itunes_art(t, a)
+            except Exception:
+                art = None
+            cache_put(ck, art or "")
+            return self._json({"url": art})
 
         # ---- mic pairing (unchanged) ----
         if p == "/ping":
