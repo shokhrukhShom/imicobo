@@ -1,0 +1,18 @@
+# systemd unit — keeps iMicobo running and restarts it on crash or reboot.
+# Install to /etc/systemd/system/imicobo.service
+[Unit]
+Description=iMicobo (karaoke + mic relay)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/imicobo
+EnvironmentFile=/opt/imicobo/.env
+ExecStart=/usr/bin/python3 /opt/imicobo/relay.py
+Restart=always
+RestartSec=3
+User=imicobo
+Group=imicobo
+
+[Install]
+WantedBy=multi-user.target

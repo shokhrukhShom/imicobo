@@ -1,1 +1,11 @@
+# secrets & runtime state — never commit these
 .env
+yt_cache.json
+*.log
+
+# python
+__pycache__/
+*.pyc
+
+# os
+.DS_Store

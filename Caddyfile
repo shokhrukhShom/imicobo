@@ -1,0 +1,6 @@
+# Caddy gives you automatic, free HTTPS (required for microphone access).
+# Put this at /etc/caddy/Caddyfile, then: sudo systemctl reload caddy
+imicobo.com, www.imicobo.com {
+    encode gzip
+    reverse_proxy 127.0.0.1:8080
+}
