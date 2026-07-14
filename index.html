@@ -584,8 +584,11 @@ const MIC = (() => {
   async function pair(){
     openModal();
     try{
-      const s = await (await fetch('/session',{method:'POST'})).json();
+      const kept = localStorage.getItem('imicobo.screencode') || '';
+      const s = await (await fetch('/session' + (kept ? `?code=${encodeURIComponent(kept)}` : ''),
+                                   {method:'POST'})).json();
       myCode = s.code;
+      localStorage.setItem('imicobo.screencode', myCode);   // same code next time
       g('pairCode').textContent = myCode.split('').join(' ');
       g('pairCode').classList.remove('wait');
       try{

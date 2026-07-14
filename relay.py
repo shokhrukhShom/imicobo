@@ -229,6 +229,7 @@ class Handler(BaseHTTPRequestHandler):
                 s = sessions.get(code)
                 if not s:
                     return self._json({"active": False})
+                s["created"] = time.time()          # heartbeat: an open screen never expires
                 return self._json({"active": True, "joined": s["joined"]})
 
         if p in ("/offer", "/answer"):
@@ -272,10 +273,23 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(n).decode() if n else ""
 
         if p == "/session":
+            # The browser may pass ?code=<remembered> to keep a STABLE code across
+            # refreshes / restarts. Resume it if it exists, recreate it if the
+            # server forgot it, otherwise mint a fresh random one.
+            want = self._code(u)
             with lock:
                 now = time.time()
                 for c in [c for c, s in sessions.items() if now - s["created"] > SESSION_TTL]:
                     sessions.pop(c, None)
+                if want and want in sessions:
+                    s = sessions[want]                       # resume — reset for a fresh handshake
+                    s["joined"] = False; s["offer"] = None
+                    s["answer"] = None; s["created"] = now
+                    return self._json({"code": want, "digits": CODE_DIGITS, "resumed": True})
+                if want and len(want) == CODE_DIGITS and want.isdigit():
+                    sessions[want] = {"joined": False, "offer": None,
+                                      "answer": None, "created": now}   # recreate remembered code
+                    return self._json({"code": want, "digits": CODE_DIGITS, "recreated": True})
                 lo, hi = 10 ** (CODE_DIGITS - 1), 10 ** CODE_DIGITS - 1
                 code = str(random.randint(lo, hi))
                 for _ in range(50):
@@ -283,7 +297,7 @@ class Handler(BaseHTTPRequestHandler):
                         break
                     code = str(random.randint(lo, hi))
                 sessions[code] = {"joined": False, "offer": None,
-                                  "answer": None, "created": time.time()}
+                                  "answer": None, "created": now}
                 return self._json({"code": code, "digits": CODE_DIGITS})
 
         if p == "/join":

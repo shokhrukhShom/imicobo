@@ -217,8 +217,11 @@ const FX = {
 
 async function boot(){
   try{
-    const s = await (await fetch('/session',{method:'POST'})).json();
+    const kept = localStorage.getItem('imicobo.screencode') || '';
+    const s = await (await fetch('/session' + (kept ? `?code=${encodeURIComponent(kept)}` : ''),
+                                 {method:'POST'})).json();
     myCode = s.code;
+    localStorage.setItem('imicobo.screencode', myCode);
     $('code').textContent = myCode.split('').join(' ');
     $('code').classList.remove('waiting');
 
