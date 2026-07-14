@@ -39,6 +39,7 @@ final class MicManager: NSObject, ObservableObject {
     private var audioTrack: RTCAudioTrack?
     private var fxChannel: RTCDataChannel?
     private var pollTask: Task<Void, Never>?
+    private var offerPublished = false
 
     private let config: RTCConfiguration = {
         let c = RTCConfiguration()
@@ -188,6 +189,7 @@ final class MicManager: NSObject, ObservableObject {
             phase = .failed("Couldn't start audio"); return
         }
         self.pc = pc
+        offerPublished = false
 
         // Raw-ish signal: no AEC/NS (they colour the voice and add delay).
         // AGC on so a quiet speaker still comes through — turn off if you clip.
@@ -215,12 +217,24 @@ final class MicManager: NSObject, ObservableObject {
             [weak self] sdp, _ in
             guard let self, let sdp else { return }
             let tuned = RTCSessionDescription(type: sdp.type, sdp: Self.opus10ms(sdp.sdp))
-            self.pc?.setLocalDescription(tuned) { _ in }   // published on ICE complete
+            self.pc?.setLocalDescription(tuned) { [weak self] _ in
+                guard let self else { return }
+                // Don't wait the full 1-3 min for ICE gathering to "complete".
+                // Host + reflexive candidates are ready within ~1s; send the
+                // offer after a short cap so the browser isn't left waiting.
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    self.publishOffer()
+                }
+            }
         }
     }
 
+    /// Send the offer to the relay. Idempotent — whichever fires first
+    /// (ICE-complete or the 2s cap) wins; the other is a no-op.
     private func publishOffer() {
-        guard let local = pc?.localDescription else { return }
+        guard !offerPublished, let local = pc?.localDescription else { return }
+        offerPublished = true
         Task {
             _ = try? await post("/offer?code=\(roomCode)", body: encode(local))
             setBitrate(256)
@@ -265,6 +279,7 @@ final class MicManager: NSObject, ObservableObject {
 
     private func teardown() {
         pollTask?.cancel()
+        offerPublished = false
         fxChannel?.close(); fxChannel = nil
         pc?.close(); pc = nil; audioTrack = nil
     }

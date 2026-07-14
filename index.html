@@ -624,7 +624,7 @@ const MIC = (() => {
       else if(pc.connectionState==='failed'){ setBar('poor','Wireless mic: <b>connection failed</b>'); }
     };
     let offer=null;
-    for(let i=0;i<40 && !offer;i++){
+    for(let i=0;i<60 && !offer;i++){
       const d=await (await fetch(`/offer?code=${myCode}`)).json();
       if(d.sdp) offer=JSON.parse(d.sdp); else await new Promise(r=>setTimeout(r,500));
     }
