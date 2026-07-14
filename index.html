@@ -507,7 +507,7 @@ $("#pair").addEventListener("click", e=>{ if(e.target.id==="pair") MIC.closeModa
    the standalone receiver — audio + effects + jitter-based quality — but the
    quality now drives the slim status bar at the bottom of the page.          */
 const MIC = (() => {
-  const CFG={iceServers:[]};
+  const CFG={iceServers:[{urls:'stun:stun.l.google.com:19302'}]};
   const g = id => document.getElementById(id);
   let pc=null, myCode=null, live=false, poll=null, statsTimer=null, usingFX=false, wantsFX=false;
 
