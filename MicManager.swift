@@ -33,6 +33,12 @@ final class MicManager: NSObject, ObservableObject {
 
     /// Remembered relay — tried first so repeat sessions connect instantly.
     @AppStorage("savedRelay") private var savedRelay = ""
+    /// Last code that worked — prefilled next time for one-tap reconnect.
+    @AppStorage("lastCode") private var lastCode = ""
+
+    /// The product's cloud relay. The "Enter code" path always talks to this —
+    /// no LAN scan (that only made sense when the screen was a laptop on Wi-Fi).
+    static let cloudHost = "imicobo.com"
 
     private var factory: RTCPeerConnectionFactory!
     private var pc: RTCPeerConnection?
@@ -84,21 +90,11 @@ final class MicManager: NSObject, ObservableObject {
         s.unlockForConfiguration()
     }
 
-    // MARK: - 1. Find the screen (saved relay first, then scan)
+    // MARK: - 1. Enter-code path — straight to the cloud relay, no LAN scan.
     func findAndPair() {
-        phase = .searching
-        if !savedRelay.isEmpty {
-            Task {
-                if await ping(savedRelay) {
-                    relayHost = savedRelay
-                    phase = .enterCode
-                    return
-                }
-                scanForRelay()
-            }
-        } else {
-            scanForRelay()
-        }
+        relayHost = Self.cloudHost
+        codeError = nil
+        phase = .enterCode
     }
 
     private func scanForRelay() {
@@ -166,6 +162,7 @@ final class MicManager: NSObject, ObservableObject {
                 return
             }
             roomCode = c
+            lastCode = c                 // remember for one-tap reconnect
             phase = .connecting
             await startCall()
         }

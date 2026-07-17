@@ -251,6 +251,14 @@
 <script>
 /* ============================================================= CATALOG */
 const CATALOG = {
+  "Editor's Choice": [
+    ["Azizam","Ed Sheeran"],["Beautiful Things","Benson Boone"],["You Raise Me Up","Josh Groban"],
+    ["Ordinary","Alex Warren"],["Home","Michael Bublé"],["All My Life","Foo Fighters"],
+    ["Everlong","Foo Fighters"],["Bittersweet Symphony","The Verve"],["Back to Friends","sombr"],
+    ["I Gotta Feeling","The Black Eyed Peas"],["Stay","The Kid LAROI"],["One Dance","Drake"],
+    ["Sunflower","Post Malone"],["Mystical Magical","Benson Boone"],["Sweater Weather","The Neighbourhood"],
+    ["Blinding Lights","The Weeknd"],["Runaway","Aurora"],["Sign of the Times","Harry Styles"]
+  ],
   "Pop": [
     ["Shape of You","Ed Sheeran"],["Someone Like You","Adele"],["Rolling in the Deep","Adele"],
     ["Bad Guy","Billie Eilish"],["Shake It Off","Taylor Swift"],["Blinding Lights","The Weeknd"],
@@ -262,7 +270,7 @@ const CATALOG = {
   ],
   "Rock": [
     ["Bohemian Rhapsody","Queen"],["Sweet Child O' Mine","Guns N' Roses"],["Livin' on a Prayer","Bon Jovi"],
-    ["Don't Stop Believin'","Journey"],["We Will Rock You","Queen"],["Hotel California","Eagles"],
+    ["Don't Stop Believin'","Journey"],["We Will Rock You","Queen"],["Hotel California","Eagles","OXYfvXKtErA"],
     ["Wonderwall","Oasis"],["Highway to Hell","AC/DC"],["Back in Black","AC/DC"],
     ["Born to Run","Bruce Springsteen"],["Africa","Toto"],["More Than a Feeling","Boston"],
     ["Every Breath You Take","The Police"],["Sweet Home Alabama","Lynyrd Skynyrd"],["Barracuda","Heart"],
@@ -304,6 +312,24 @@ const CATALOG = {
     ["I Say a Little Prayer","Aretha Franklin"],["Georgia on My Mind","Ray Charles"],["Hit the Road Jack","Ray Charles"],
     ["End of the Road","Boyz II Men"],["Waterfalls","TLC"],["We Belong Together","Mariah Carey"],
     ["Rehab","Amy Winehouse"],["Valerie","Amy Winehouse"]
+  ],
+  "International": [
+    ["Waka Waka","Shakira"],["Sukiyaki","Kyu Sakamoto"],["Nour El Ein","Amr Diab"],
+    ["Jerusalema","Master KG"],["Bésame Mucho","Andrea Bocelli"],["La Javanaise","Serge Gainsbourg"],
+    ["Dernière Danse","Indila"],["Bella Ciao","La Casa de Papel"],["Chaiyya Chaiyya","Sukhwinder Singh"],
+    ["Sarà Perché Ti Amo","Ricchi e Poveri"],["Volare","Gipsy Kings"],["99 Luftballons","Nena"],
+    ["Major Tom","Peter Schilling"],["Hips Don't Lie","Shakira"],["Bailando","Enrique Iglesias"],
+    ["Alors on Danse","Stromae"],["DDU-DU DDU-DU","BLACKPINK"],["Dragostea Din Tei","O-Zone"],
+    ["Made in Romania","Ionut Cercel"],["Prisencolinensinainciusol","Adriano Celentano"]
+  ],
+  "Popular Meme Songs": [
+    ["7th Element","Vitas"],["PPAP (Pen Pineapple Apple Pen)","Pikotaro"],["Axel F","Crazy Frog"],
+    ["Gut Genug","Kitschkrieg"],["Dragostea Din Tei","O-Zone"],["Blue","yung kai"],
+    ["The Fox (What Does the Fox Say)","Ylvis"],["Tequila","The Champs"],["Dame Un Grrr","Fantomel"],
+    ["All Star","Smash Mouth"],["Mundian To Bach Ke","Panjabi MC"],["Never Gonna Give You Up","Rick Astley"],
+    ["Trololo","Eduard Khil"],["Sandstorm","Darude"],["Chocolate Rain","Tay Zonday"],
+    ["Shooting Stars","Bag Raiders"],["Run Away (Epic Sax Guy)","SunStroke Project"],["What Is Love","Haddaway"],
+    ["Destiny","川子"],["Tokyo","Leateq"]
   ]
 };
 
@@ -334,7 +360,7 @@ function render(){
   main.innerHTML = "";
   main.appendChild(rowEl("recent", "▶ Recently sung", []));
   for(const [genre, songs] of Object.entries(CATALOG))
-    main.appendChild(rowEl(genre, genre, songs.map(([t,a])=>({t,a}))));
+    main.appendChild(rowEl(genre, genre, songs.map(x=>({t:x[0], a:x[1], id:x[2]}))));
   renderRecent();
 }
 function rowEl(id, title, songs){
@@ -431,8 +457,11 @@ async function play(song){
   const q = queryOf(song);
   pushRecent(song);
   openOverlay(song.t + (song.a? " — "+song.a : ""));
-  const cached = idCache[key(song)];
-  if(cached){ startPlayer(cached); return; }
+  const cached = song.id || idCache[key(song)];   // song.id = pinned video from the catalog
+  if(cached){
+    if(song.id){ idCache[key(song)] = song.id; store(IDCACHE_KEY, idCache); }
+    startPlayer(cached); return;
+  }
   $("#playerLoading").style.display = "grid";
   try{
     const d = await (await fetch("/resolve?q=" + encodeURIComponent(q))).json();
