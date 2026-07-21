@@ -397,6 +397,11 @@ function judge(){
 
 async function stats(){
   if(!pc||pc.connectionState!=='connected')return;
+  // Keep the receive buffer minimal every tick so Wi-Fi jitter can't leave a
+  // permanent, growing delay (what mute/unmute used to reset by hand).
+  try{ const rr=pc.getReceivers().find(x=>x.track&&x.track.kind==='audio');
+       if(rr){ if('jitterBufferTarget' in rr) rr.jitterBufferTarget=0;
+               if('playoutDelayHint' in rr)  rr.playoutDelayHint=0; } }catch(_){}
   const st=await pc.getStats(); let rtt=null,jit=null;
   st.forEach(r=>{
     if(r.type==='candidate-pair'&&r.nominated&&r.currentRoundTripTime!=null)rtt=r.currentRoundTripTime;

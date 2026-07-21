@@ -688,6 +688,12 @@ const MIC = (() => {
   const JITTER_GOOD=10, JITTER_FAIR=30, history=[];
   async function stats(){
     if(!pc || pc.connectionState!=='connected') return;
+    // Keep the receive buffer from creeping up — the cause of the slowly
+    // growing delay. Re-assert minimal buffering every tick so a rough Wi-Fi
+    // patch can't leave a permanent lag (what mute/unmute used to reset).
+    try{ const rr = pc.getReceivers().find(x=>x.track&&x.track.kind==='audio');
+         if(rr){ if('jitterBufferTarget' in rr) rr.jitterBufferTarget=0;
+                 if('playoutDelayHint' in rr)  rr.playoutDelayHint=0; } }catch(_){}
     const st=await pc.getStats(); let rtt=null, jit=null;
     st.forEach(r=>{
       if(r.type==='candidate-pair'&&r.nominated&&r.currentRoundTripTime!=null) rtt=r.currentRoundTripTime;

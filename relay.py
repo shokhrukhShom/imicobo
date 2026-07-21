@@ -29,8 +29,14 @@ PORT = int(os.environ.get("PORT", "8080"))
 YT_API_KEY = os.environ.get("YT_API_KEY", "").strip()
 
 # ---- mic pairing config (from the original relay) ----
-CODE_DIGITS = 4                # 4 = 10,000 combos (fine on a home LAN); use 6 in cloud
+CODE_DIGITS = 6                # 6 = 1,000,000 combos (safe on the public relay)
 SESSION_TTL = 15 * 60          # abandoned pairing sessions expire
+
+# Brute-force guard: cap how many /join attempts one IP can make per minute.
+# Even a short code is unbreakable when guesses are throttled this hard.
+JOIN_LIMIT_PER_MIN = 30
+join_hits = {}                 # ip -> [recent attempt timestamps]
+join_lock = threading.Lock()
 
 # ---- karaoke cache ----
 CACHE_FILE = os.environ.get("CACHE_FILE", "yt_cache.json")
@@ -156,6 +162,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _code(self, u):
         return self._q(u, "code")
+
+    def _client_ip(self):
+        # Caddy forwards the real client IP here; fall back to the socket peer.
+        xff = self.headers.get("X-Forwarded-For", "")
+        if xff:
+            return xff.split(",")[0].strip()
+        return self.client_address[0] if self.client_address else "?"
 
     def do_OPTIONS(self):
         self._json({"ok": True})
@@ -301,6 +314,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"code": code, "digits": CODE_DIGITS})
 
         if p == "/join":
+            # throttle brute-force guessing per IP
+            ip = self._client_ip()
+            now = time.time()
+            with join_lock:
+                hits = [t for t in join_hits.get(ip, []) if now - t < 60]
+                if len(hits) >= JOIN_LIMIT_PER_MIN:
+                    join_hits[ip] = hits
+                    return self._json({"ok": False,
+                                       "error": "Too many attempts. Please wait a minute."}, 429)
+                hits.append(now)
+                join_hits[ip] = hits
             code = self._code(u)
             with lock:
                 s = sessions.get(code)
