@@ -295,6 +295,8 @@ class Handler(BaseHTTPRequestHandler):
         # screen opens / resumes a room
         if p == "/session":
             want = self._code(u)
+            _ips = lan_ips()
+            host = f"{_ips[0]}:{PORT}" if _ips else None
             with lock:
                 now = time.time()
                 for c in [c for c, s in sessions.items() if now - s["created"] > SESSION_TTL]:
@@ -304,11 +306,11 @@ class Handler(BaseHTTPRequestHandler):
                 if want and want in sessions:
                     sessions[want] = {"created": now, "mics": {}}
                     return self._json({"code": want, "digits": CODE_DIGITS,
-                                       "max": MAX_MICS, "resumed": True})
+                                       "max": MAX_MICS, "host": host, "resumed": True})
                 if want and len(want) == CODE_DIGITS and want.isdigit():
                     sessions[want] = {"created": now, "mics": {}}
                     return self._json({"code": want, "digits": CODE_DIGITS,
-                                       "max": MAX_MICS, "recreated": True})
+                                       "max": MAX_MICS, "host": host, "recreated": True})
                 lo, hi = 10 ** (CODE_DIGITS - 1), 10 ** CODE_DIGITS - 1
                 code = str(random.randint(lo, hi))
                 for _ in range(50):
@@ -316,7 +318,7 @@ class Handler(BaseHTTPRequestHandler):
                         break
                     code = str(random.randint(lo, hi))
                 sessions[code] = {"created": now, "mics": {}}
-                return self._json({"code": code, "digits": CODE_DIGITS, "max": MAX_MICS})
+                return self._json({"code": code, "digits": CODE_DIGITS, "max": MAX_MICS, "host": host})
 
         # a phone joins the room -> gets its own mic id (or "party full")
         if p == "/join":

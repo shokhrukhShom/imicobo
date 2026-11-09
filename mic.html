@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iMicobo · Browser mic</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#0a0c10">
+<style>
+  :root{
+    --bg:#0a0c10; --panel:#141922; --panel2:#1b2230; --line:#2a3340;
+    --ink:#e8eef5; --dim:#8593a5; --accent:#5eead4; --ok:#4ade80;
+    --warn:#fbbf24; --bad:#f87171; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    display:grid;place-items:center;padding:28px}
+  .wrap{width:min(440px,100%);text-align:center}
+  .brand{font-size:13px;letter-spacing:3px;text-transform:uppercase;color:var(--dim);margin-bottom:6px}
+  h1{font-size:26px;font-weight:650;margin:0 0 6px}
+  .sub{color:var(--dim);font-size:14px;margin:0 0 24px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:26px 22px}
+  label{display:block;text-align:left;color:var(--dim);font-size:13px;margin:12px 2px 6px}
+  input[type=text]{width:100%;background:#0a0d12;color:var(--ink);border:1px solid var(--line);
+    border-radius:11px;padding:13px;font:600 20px var(--mono);letter-spacing:4px;text-align:center}
+  input.name{font:600 15px inherit;letter-spacing:0}
+  button{width:100%;margin-top:16px;font:600 16px inherit;border:none;border-radius:12px;
+    padding:14px;cursor:pointer;background:var(--accent);color:#06231f}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.ghost{background:var(--panel2);color:var(--ink);border:1px solid var(--line)}
+  .err{color:var(--warn);font-size:13.5px;margin-top:12px;min-height:18px}
+  .live{display:none}.live.show{display:block}
+  .form.hide{display:none}
+  .mic-ring{width:150px;height:150px;border-radius:50%;margin:6px auto 10px;display:grid;place-items:center;
+    background:rgba(94,234,212,.15);font-size:58px;cursor:pointer;user-select:none;transition:.15s}
+  .mic-ring.muted{background:rgba(130,140,160,.18)}
+  .meter{height:12px;background:#080a0e;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:14px 0}
+  .meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),#22d3ee);transition:width .06s linear}
+  .vol{display:flex;align-items:center;gap:10px;margin-top:6px}
+  .vol input{flex:1;accent-color:var(--accent)}
+  .state{color:var(--dim);font-size:14px;margin-top:8px}
+  .state b{color:var(--ok)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">iMicobo</div>
+  <h1 id="title">Sing from this computer</h1>
+  <p class="sub">Use this browser as a microphone — no app needed. Great as a second mic.</p>
+
+  <div class="card">
+    <div class="form" id="form">
+      <label for="code">Code shown on the screen</label>
+      <input type="text" id="code" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="off">
+      <label for="name">Your name (optional)</label>
+      <input type="text" id="name" class="name" placeholder="e.g. Alex" maxlength="24" autocomplete="off">
+      <button id="joinBtn" onclick="join()">Join as microphone</button>
+      <div class="err" id="err"></div>
+    </div>
+
+    <div class="live" id="live">
+      <div class="mic-ring" id="ring" onclick="toggleMute()">🎤</div>
+      <div class="state" id="state">Connecting…</div>
+      <div class="meter"><i id="meter"></i></div>
+      <div class="vol">🔉<input type="range" id="vol" min="0" max="1" step="0.01" value="0.5">🔊</div>
+      <button class="ghost" onclick="leave()">Leave</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const CFG = { iceServers:[{urls:'stun:stun.l.google.com:19302'}] };
+const $ = id => document.getElementById(id);
+let pc=null, dc=null, stream=null, code=null, micID=null, muted=false;
+
+$('code').addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g,'').slice(0,6); });
+
+async function join(){
+  code = $('code').value.trim();
+  if(code.length < 4){ $('err').textContent='Enter the code from the screen.'; return; }
+  $('joinBtn').disabled = true; $('err').textContent='';
+  const name = encodeURIComponent($('name').value.trim());
+  try{
+    const j = await (await fetch(`/join?code=${code}&name=${name}`,{method:'POST'})).json();
+    if(!j.mic){ $('err').textContent = j.error || "That code isn't valid."; $('joinBtn').disabled=false; return; }
+    micID = j.mic;
+
+    stream = await navigator.mediaDevices.getUserMedia({ audio:{
+      echoCancellation:false, noiseSuppression:false, autoGainControl:true, channelCount:1 }});
+
+    pc = new RTCPeerConnection(CFG);
+    stream.getTracks().forEach(t => pc.addTrack(t, stream));
+    dc = pc.createDataChannel('fx');
+    dc.onopen = sendFx;
+    pc.onconnectionstatechange = () => {
+      const s = pc.connectionState;
+      if(s==='connected'){ $('state').innerHTML = 'You are <b>live</b> on the screen'; meter(); }
+      else if(s==='failed'){ $('state').textContent = 'Connection failed — try again.'; }
+      else if(s==='disconnected'){ $('state').textContent = 'Reconnecting…'; }
+    };
+
+    // show the live panel while we finish the handshake
+    $('form').classList.add('hide'); $('live').classList.add('show');
+    $('title').textContent = 'Microphone';
+
+    const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+    await iceDone(pc);
+    await fetch(`/offer?code=${code}&mic=${micID}`,{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(pc.localDescription)});
+
+    for(let i=0;i<60;i++){
+      const d = await (await fetch(`/answer?code=${code}&mic=${micID}`)).json();
+      if(d.sdp){ await pc.setRemoteDescription(JSON.parse(d.sdp)); break; }
+      await new Promise(r=>setTimeout(r,300));
+    }
+  }catch(e){
+    $('err').textContent = 'Could not reach the screen. Check the code and your connection.';
+    $('joinBtn').disabled = false;
+    $('form').classList.remove('hide'); $('live').classList.remove('show');
+  }
+}
+
+function iceDone(pc){ return new Promise(res=>{
+  if(pc.iceGatheringState==='complete') return res();
+  const c=()=>{ if(pc.iceGatheringState==='complete'){ pc.removeEventListener('icegatheringstatechange',c); res(); } };
+  pc.addEventListener('icegatheringstatechange',c); setTimeout(res,3000);
+});}
+
+function sendFx(){
+  if(!dc || dc.readyState!=='open') return;
+  dc.send(JSON.stringify({ muted, volume: +$('vol').value }));
+}
+$('vol') && $('vol').addEventListener('input', sendFx);
+
+function toggleMute(){
+  muted = !muted;
+  if(stream) stream.getAudioTracks().forEach(t => t.enabled = !muted);
+  $('ring').classList.toggle('muted', muted);
+  $('ring').textContent = muted ? '🔇' : '🎤';
+  sendFx();
+}
+
+function meter(){
+  try{
+    const ac = new (window.AudioContext||window.webkitAudioContext)();
+    const src = ac.createMediaStreamSource(stream), an = ac.createAnalyser(); an.fftSize=256;
+    src.connect(an);
+    const buf = new Uint8Array(an.frequencyBinCount), bar=$('meter');
+    (function draw(){ an.getByteFrequencyData(buf); let s=0; for(const v of buf) s+=v;
+      bar.style.width = Math.min(100,(s/buf.length)*1.6)+'%'; requestAnimationFrame(draw); })();
+  }catch(_){}
+}
+
+async function leave(){
+  if(code && micID) { try{ await fetch(`/cancel?code=${code}&mic=${micID}`,{method:'POST'}); }catch(_){} }
+  try{ pc && pc.close(); }catch(_){}
+  if(stream) stream.getTracks().forEach(t=>t.stop());
+  location.reload();
+}
+
+// Prefill the code from ?c= so a QR/link can drop you straight in.
+const q = new URLSearchParams(location.search).get('c');
+if(q){ $('code').value = q.replace(/\D/g,'').slice(0,6); }
+</script>
+</body>
+</html>

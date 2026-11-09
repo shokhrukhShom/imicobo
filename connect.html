@@ -151,10 +151,11 @@ async function boot(){
     const kept = localStorage.getItem('imicobo.screencode') || '';
     const s = await (await fetch('/session' + (kept?`?code=${encodeURIComponent(kept)}`:''),
                                  {method:'POST'})).json();
-    myCode = s.code; localStorage.setItem('imicobo.screencode', myCode);
+    myCode = s.code; const qrHost=(s.host&&!/^(localhost|127\.)/.test(s.host))?s.host:location.host;
+    localStorage.setItem('imicobo.screencode', myCode);
     $('code').textContent = myCode.split('').join(' ');
     $('code').classList.remove('waiting');
-    try{ $('qr').innerHTML = QR.svg(`imicobo://pair?h=${location.host}&c=${myCode}`,200); $('qr').classList.add('show'); }catch(_){}
+    try{ $('qr').innerHTML = QR.svg(`imicobo://pair?h=${qrHost}&c=${myCode}`,200); $('qr').classList.add('show'); }catch(_){}
     setStatus('Waiting for singers…','mid');
     poll = setInterval(tick, 900);
     statsTimer = setInterval(updateStats, 1000);

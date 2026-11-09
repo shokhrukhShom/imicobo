@@ -555,7 +555,7 @@ $("#pair").addEventListener("click", e=>{ if(e.target.id==="pair") MIC.closeModa
 const MIC = (() => {
   const CFG={iceServers:[{urls:'stun:stun.l.google.com:19302'}]};
   const g = id => document.getElementById(id);
-  let myCode=null, poll=null, statsTimer=null;
+  let myCode=null, poll=null, statsTimer=null, qrHost=location.host;
   const mics = {};   // id -> {pc,name,gain,src,audio,muted,volume,jitter,live}
 
   /* ---- shared effects chain (ONE for the whole room) ----
@@ -639,7 +639,8 @@ const MIC = (() => {
     if(myCode) return;
     const kept = localStorage.getItem('imicobo.screencode') || '';
     const s = await (await fetch('/session'+(kept?`?code=${encodeURIComponent(kept)}`:''),{method:'POST'})).json();
-    myCode=s.code; localStorage.setItem('imicobo.screencode', myCode);
+    myCode=s.code; qrHost=(s.host&&!/^(localhost|127\.)/.test(s.host))?s.host:location.host;
+    localStorage.setItem('imicobo.screencode', myCode);
     poll=setInterval(tick,900); statsTimer=setInterval(updateStats,1000);
   }
   async function pair(){
@@ -648,7 +649,7 @@ const MIC = (() => {
       await ensureRoom();
       g('pairCode').textContent=myCode.split('').join(' ');
       g('pairCode').classList.remove('wait');
-      try{ g('pairQR').innerHTML=QR.svg(`imicobo://pair?h=${location.host}&c=${myCode}`,200); g('pairQR').classList.add('show'); }catch(_){}
+      try{ g('pairQR').innerHTML=QR.svg(`imicobo://pair?h=${qrHost}&c=${myCode}`,200); g('pairQR').classList.add('show'); }catch(_){}
       renderRoster();
     }catch(e){ g('pairHint').textContent='Relay not reachable — is the server running?'; }
   }
