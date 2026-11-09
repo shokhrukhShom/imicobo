@@ -155,9 +155,12 @@ function setMode(){
   Object.values(mics).forEach(m=>applyLevel(m, mode));
   if((eqActive||wetActive) && ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{});
 }
-function unlockAudio(){ if(ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{}); }
-['click','keydown','touchstart','pointerdown'].forEach(ev=>
-  document.addEventListener(ev,()=>{ unlockAudio(); }));
+function kickAudio(){
+  if(ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{});
+  Object.values(mics).forEach(m=>{ if(m.audio) m.audio.play().catch(()=>{}); });
+}
+function unlockAudio(){ kickAudio(); }
+['click','keydown','touchstart','pointerdown'].forEach(ev=>document.addEventListener(ev,kickAudio));
 
 /* ───────── pairing / room ───────── */
 async function boot(){
@@ -229,12 +232,15 @@ async function startMic(id, name){
 function attachMic(id, stream){
   const m = mics[id]; if(!m) return;
   // raw element = instant sound before any user gesture unlocks the FX chain
-  const a = new Audio(); a.srcObject = stream; a.autoplay = true; a.muted = false;
-  a.play().catch(()=>{}); m.audio = a;
-  if(!ctx) buildChain();
-  const src = ctx.createMediaStreamSource(stream), g = ctx.createGain();
-  src.connect(g); g.connect(chain.mixBus);
-  m.src = src; m.gain = g;
+  const a = document.createElement('audio');
+  a.autoplay=true; a.playsInline=true; a.muted=false; a.style.display='none';
+  document.body.appendChild(a);
+  a.srcObject = stream; a.play().catch(()=>{}); m.audio = a;
+  try{
+    if(!ctx) buildChain();
+    const src = ctx.createMediaStreamSource(stream), g = ctx.createGain();
+    src.connect(g); g.connect(chain.mixBus); m.src = src; m.gain = g;
+  }catch(e){ /* raw dry still plays */ }
   // keep this receiver's buffer minimal (low latency)
   try{ const r=m.pc.getReceivers().find(x=>x.track&&x.track.kind==='audio');
        if(r){ if('jitterBufferTarget' in r) r.jitterBufferTarget=0;
@@ -256,7 +262,7 @@ function removeMic(id){
   const m = mics[id]; if(!m) return;
   try{ m.pc && m.pc.close(); }catch(_){}
   try{ m.src && m.src.disconnect(); m.gain && m.gain.disconnect(); }catch(_){}
-  if(m.audio){ m.audio.srcObject=null; }
+  if(m.audio){ m.audio.srcObject=null; m.audio.remove(); }
   delete mics[id]; renderRoster(); renderBar();
 }
 function iceDone(pc){ return new Promise(res=>{

@@ -634,8 +634,12 @@ const MIC = (() => {
     Object.values(mics).forEach(m=>applyLevel(m, mode));
     if((eqActive||wetActive) && ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{});
   }
-  function unlockAudio(){ if(ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{}); }
-  ['click','keydown','touchstart','pointerdown'].forEach(ev=>document.addEventListener(ev,()=>{ unlockAudio(); }));
+  function kickAudio(){
+    if(ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{});
+    Object.values(mics).forEach(m=>{ if(m.audio) m.audio.play().catch(()=>{}); });  // Safari: resume on gesture
+  }
+  function unlockAudio(){ kickAudio(); }
+  ['click','keydown','touchstart','pointerdown'].forEach(ev=>document.addEventListener(ev,kickAudio));
 
   /* ---- bottom status bar ---- */
   function setBar(cls, html, stat){
@@ -718,10 +722,18 @@ const MIC = (() => {
   }
   function attachMic(id, stream){
     const m=mics[id]; if(!m) return;
-    const a=new Audio(); a.srcObject=stream; a.autoplay=true; a.muted=false; a.play().catch(()=>{}); m.audio=a;
-    if(!ctx) buildChain();
-    const src=ctx.createMediaStreamSource(stream), gg=ctx.createGain();
-    src.connect(gg); gg.connect(chain.mixBus); m.src=src; m.gain=gg;
+    // Safari only reliably plays an IN-DOM, playsInline element — a detached
+    // new Audio() stays silent. Append a hidden one.
+    const a=document.createElement('audio');
+    a.autoplay=true; a.playsInline=true; a.muted=false; a.style.display='none';
+    document.body.appendChild(a);
+    a.srcObject=stream; a.play().catch(()=>{}); m.audio=a;
+    // Web Audio effects are optional — wrap so a Safari hiccup can't kill the raw voice.
+    try{
+      if(!ctx) buildChain();
+      const src=ctx.createMediaStreamSource(stream), gg=ctx.createGain();
+      src.connect(gg); gg.connect(chain.mixBus); m.src=src; m.gain=gg;
+    }catch(e){ /* no Web Audio here -> raw dry still plays live */ }
     try{ const r=m.pc.getReceivers().find(x=>x.track&&x.track.kind==='audio');
          if(r){ if('jitterBufferTarget' in r) r.jitterBufferTarget=0; if('playoutDelayHint' in r) r.playoutDelayHint=0; } }catch(_){}
     applyLevel(m); setMode();
@@ -741,7 +753,7 @@ const MIC = (() => {
     const m=mics[id]; if(!m) return;
     try{ m.pc && m.pc.close(); }catch(_){}
     try{ m.src && m.src.disconnect(); m.gain && m.gain.disconnect(); }catch(_){}
-    if(m.audio) m.audio.srcObject=null;
+    if(m.audio){ m.audio.srcObject=null; m.audio.remove(); }
     delete mics[id]; renderRoster(); renderBar();
   }
   function iceDone(pc){ return new Promise(res=>{
