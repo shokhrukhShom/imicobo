@@ -562,7 +562,7 @@ const MIC = (() => {
      each mic -> own gain -> mixBus -> EQ -> comp -> dry/reverb/echo -> out -> master -> speakers.
      Per-mic volume/mute ride each mic's gain; reverb/echo/EQ are shared (last
      phone to change them sets the room vibe) — cheapest and lowest-latency. */
-  let ctx=null, chain=null, usingFX=false;
+  let ctx=null, chain=null, fxWanted=false;   // fxWanted => route through Web Audio
   function buildChain(){
     ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
     const mixBus=ctx.createGain(), inputGain=ctx.createGain(),
@@ -591,7 +591,13 @@ const MIC = (() => {
     return buf;
   }
   function applyShared(p){
-    if(!chain) return;
+    // Does the phone actually want any effect? If not, we stay on the raw,
+    // low-latency <audio> path (Web Audio adds output latency).
+    fxWanted = (p.reverb>0.02) || (p.echo>0.02)
+      || (p.bass!=null   && Math.abs(p.bass-0.5)>0.03)
+      || (p.mid!=null    && Math.abs(p.mid-0.5)>0.03)
+      || (p.treble!=null && Math.abs(p.treble-0.5)>0.03);
+    if(!chain){ setMode(); return; }
     const t=ctx.currentTime, set=(pm,v)=>pm.setTargetAtTime(v,t,0.02);
     if(p.reverb!=null) set(chain.reverbWet.gain,p.reverb*0.9);
     if(p.echo!=null) set(chain.echoWet.gain,p.echo*0.6);
@@ -604,15 +610,20 @@ const MIC = (() => {
     if(p.reverbSize!=null) chain.convolver.buffer=impulse(0.4+p.reverbSize*3.0,2.0);
     const wet=(p.reverb??0)*0.9+(p.echo??0)*0.6;
     set(chain.dry.gain, Math.max(0.35, 1-wet*0.45));
+    setMode();
   }
-  function tryActivateFX(){
-    if(usingFX || !ctx || ctx.state!=='running' || !chain) return;
-    usingFX=true; chain.master.gain.value=1;
-    Object.values(mics).forEach(m=>{ if(m.audio) m.audio.muted=true; applyLevel(m); });
+  // Are effects actually engaged right now? Only then do we use Web Audio.
+  function usingFX(){ return fxWanted && !!ctx && ctx.state==='running' && !!chain; }
+  // Pick the output path for every mic: raw <audio> (low latency) or the FX chain.
+  function setMode(){
+    const fx = usingFX();
+    if(chain) chain.master.gain.value = fx ? 1 : 0;   // FX chain silent unless wanted
+    Object.values(mics).forEach(applyLevel);
+    // If effects are wanted but the context is still suspended, try to resume.
+    if(fxWanted && ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{});
   }
-  function unlockAudio(){ if(ctx) ctx.resume().then(tryActivateFX).catch(()=>{}); }
-  ['click','keydown','touchstart','pointerdown'].forEach(ev=>document.addEventListener(ev,()=>{ if(!usingFX) unlockAudio(); }));
-  setInterval(()=>{ if(ctx && !usingFX) unlockAudio(); }, 2000);
+  function unlockAudio(){ if(ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{}); }
+  ['click','keydown','touchstart','pointerdown'].forEach(ev=>document.addEventListener(ev,()=>{ unlockAudio(); }));
 
   /* ---- bottom status bar ---- */
   function setBar(cls, html, stat){
@@ -701,12 +712,16 @@ const MIC = (() => {
     src.connect(gg); gg.connect(chain.mixBus); m.src=src; m.gain=gg;
     try{ const r=m.pc.getReceivers().find(x=>x.track&&x.track.kind==='audio');
          if(r){ if('jitterBufferTarget' in r) r.jitterBufferTarget=0; if('playoutDelayHint' in r) r.playoutDelayHint=0; } }catch(_){}
-    applyLevel(m); tryActivateFX();
+    applyLevel(m); setMode();
   }
   function applyLevel(m){
+    const fx = usingFX();
     const v = m.muted ? 0 : m.volume*2;
     if(m.gain && ctx) m.gain.gain.setTargetAtTime(v, ctx.currentTime, 0.02);
-    if(m.audio){ if(usingFX){ m.audio.muted=true; } else { m.audio.muted=m.muted; m.audio.volume=Math.min(1,Math.max(0,m.volume*2)); } }
+    if(m.audio){
+      if(fx){ m.audio.muted = true; }                                  // FX chain carries it
+      else  { m.audio.muted = m.muted; m.audio.volume = Math.min(1, Math.max(0, m.volume*2)); }
+    }
   }
   function removeMic(id){
     const m=mics[id]; if(!m) return;

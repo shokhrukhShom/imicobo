@@ -90,7 +90,7 @@ const mics = {};           // id -> {pc,name,gain,src,audio,muted,volume,jitter,
                                                        └▶ echo ──┘
    Per-mic volume/mute live on each mic's gain. Reverb/echo/EQ are shared
    (last phone to change them sets the room's vibe) — cheapest + lowest latency. */
-let ctx=null, chain=null, usingFX=false;
+let ctx=null, chain=null, fxWanted=false;
 function buildChain(){
   ctx = new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
   const mixBus=ctx.createGain(), inputGain=ctx.createGain(),
@@ -120,7 +120,11 @@ function impulse(seconds,decay){
   return buf;
 }
 function applyShared(p){
-  if(!chain) return;
+  fxWanted = (p.reverb>0.02) || (p.echo>0.02)
+    || (p.bass!=null   && Math.abs(p.bass-0.5)>0.03)
+    || (p.mid!=null    && Math.abs(p.mid-0.5)>0.03)
+    || (p.treble!=null && Math.abs(p.treble-0.5)>0.03);
+  if(!chain){ setMode(); return; }
   const t=ctx.currentTime, set=(pm,v)=>pm.setTargetAtTime(v,t,0.02);
   if(p.reverb!=null) set(chain.reverbWet.gain,p.reverb*0.9);
   if(p.echo!=null) set(chain.echoWet.gain,p.echo*0.6);
@@ -133,17 +137,18 @@ function applyShared(p){
   if(p.reverbSize!=null) chain.convolver.buffer=impulse(0.4+p.reverbSize*3.0,2.0);
   const wet=(p.reverb??0)*0.9+(p.echo??0)*0.6;
   set(chain.dry.gain, Math.max(0.35, 1-wet*0.45));
+  setMode();
 }
-function tryActivateFX(){
-  if(usingFX || !ctx || ctx.state!=='running' || !chain) return;
-  usingFX=true; chain.master.gain.value=1;
-  // the mix now carries all audio — silence the raw per-mic <audio> elements
-  Object.values(mics).forEach(m=>{ if(m.audio) m.audio.muted=true; applyLevel(m); });
+function usingFX(){ return fxWanted && !!ctx && ctx.state==='running' && !!chain; }
+function setMode(){
+  const fx = usingFX();
+  if(chain) chain.master.gain.value = fx ? 1 : 0;      // raw <audio> unless effects wanted
+  Object.values(mics).forEach(applyLevel);
+  if(fxWanted && ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{});
 }
-function unlockAudio(){ if(ctx) ctx.resume().then(tryActivateFX).catch(()=>{}); }
+function unlockAudio(){ if(ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{}); }
 ['click','keydown','touchstart','pointerdown'].forEach(ev=>
-  document.addEventListener(ev,()=>{ if(!usingFX) unlockAudio(); }));
-setInterval(()=>{ if(ctx && !usingFX) unlockAudio(); }, 2000);
+  document.addEventListener(ev,()=>{ unlockAudio(); }));
 
 /* ───────── pairing / room ───────── */
 async function boot(){
@@ -225,15 +230,16 @@ function attachMic(id, stream){
   try{ const r=m.pc.getReceivers().find(x=>x.track&&x.track.kind==='audio');
        if(r){ if('jitterBufferTarget' in r) r.jitterBufferTarget=0;
               if('playoutDelayHint' in r) r.playoutDelayHint=0; } }catch(_){}
-  applyLevel(m); tryActivateFX();
+  applyLevel(m); setMode();
 }
 
 /* a mic's gain carries its volume+mute; raw <audio> mirrors it until FX is live */
 function applyLevel(m){
+  const fx = usingFX();
   const v = m.muted ? 0 : m.volume*2;
   if(m.gain && ctx) m.gain.gain.setTargetAtTime(v, ctx.currentTime, 0.02);
   if(m.audio){
-    if(usingFX){ m.audio.muted = true; }               // mix plays; element silent
+    if(fx){ m.audio.muted = true; }                    // FX chain carries it
     else { m.audio.muted = m.muted; m.audio.volume = Math.min(1, Math.max(0, m.volume*2)); }
   }
 }
