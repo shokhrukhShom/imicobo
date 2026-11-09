@@ -150,6 +150,21 @@
   .pqr{width:200px;height:200px;background:#fff;border-radius:14px;padding:10px;margin:14px auto 4px;display:none}
   .pqr.show{display:block}.pqr svg{width:100%;height:100%;display:block}
   .phint{color:var(--dim);font-size:13.5px;margin-top:8px}
+  .proster{display:flex;flex-direction:column;gap:8px;margin:14px 0 2px;text-align:left}
+  .pmic{display:flex;align-items:center;gap:10px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:12px;padding:9px 11px}
+  .pmic .who{flex:1;min-width:0}
+  .pmic .nm{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pmic .st{font-size:11px;color:var(--dim);font-family:var(--mono)}
+  .pmic .st.ok{color:var(--ok)} .pmic .st.fair{color:var(--warn)} .pmic .st.poor{color:var(--bad)}
+  .pmic input[type=range]{width:84px;accent-color:var(--accent)}
+  .pmic .mute{background:var(--panel);border:1px solid var(--line);color:var(--ink);
+    font:600 12px inherit;border-radius:9px;padding:6px 10px;cursor:pointer;white-space:nowrap}
+  .pmic.muted .mute{background:var(--bad);color:#2a0b0b;border-color:var(--bad)}
+  .pmic.muted .nm{color:var(--dim)}
+  .sheet .danger{margin-top:10px;background:none;border:1px solid var(--line);color:var(--dim);
+    font:600 13px inherit;border-radius:10px;padding:9px 14px;cursor:pointer;width:100%}
+  .sheet .danger:hover{border-color:var(--bad);color:var(--bad)}
 
   /* ---------- toast ---------- */
   .toast{position:fixed;left:50%;bottom:calc(var(--barh) + 16px);transform:translateX(-50%);z-index:220;
@@ -235,12 +250,14 @@
 <!-- pairing modal -->
 <div class="modal" id="pair">
   <div class="sheet">
-    <h3>Pair your iPhone</h3>
-    <p class="sub">Open iMicobo on your phone, then scan or type the code.</p>
+    <h3>Add microphones</h3>
+    <p class="sub">Up to 6 phones can sing at once. Scan or type the code — the same code works for everyone.</p>
     <div class="pqr" id="pairQR"></div>
     <div class="pcode wait" id="pairCode">– – – –</div>
+    <div class="proster" id="pairRoster"></div>
     <div class="phint" id="pairHint">Starting…</div>
-    <button class="close" onclick="MIC.closeModal()">Close</button>
+    <button class="close" onclick="MIC.closeModal()">Done</button>
+    <button class="danger" id="pairDisconnect" style="display:none" onclick="MIC.disconnectAll()">Disconnect everyone</button>
   </div>
 </div>
 
@@ -538,132 +555,162 @@ $("#pair").addEventListener("click", e=>{ if(e.target.id==="pair") MIC.closeModa
 const MIC = (() => {
   const CFG={iceServers:[{urls:'stun:stun.l.google.com:19302'}]};
   const g = id => document.getElementById(id);
-  let pc=null, myCode=null, live=false, poll=null, statsTimer=null, usingFX=false, wantsFX=false;
+  let myCode=null, poll=null, statsTimer=null;
+  const mics = {};   // id -> {pc,name,gain,src,audio,muted,volume,jitter,live}
 
-  /* -- bottom status bar -- */
+  /* ---- shared effects chain (ONE for the whole room) ----
+     each mic -> own gain -> mixBus -> EQ -> comp -> dry/reverb/echo -> out -> master -> speakers.
+     Per-mic volume/mute ride each mic's gain; reverb/echo/EQ are shared (last
+     phone to change them sets the room vibe) — cheapest and lowest-latency. */
+  let ctx=null, chain=null, usingFX=false;
+  function buildChain(){
+    ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
+    const mixBus=ctx.createGain(), inputGain=ctx.createGain(),
+          bass=ctx.createBiquadFilter(), mid=ctx.createBiquadFilter(), treble=ctx.createBiquadFilter(),
+          comp=ctx.createDynamicsCompressor(), dry=ctx.createGain(),
+          reverbWet=ctx.createGain(), echoWet=ctx.createGain(), convolver=ctx.createConvolver(),
+          delay=ctx.createDelay(1.0), feedback=ctx.createGain(), out=ctx.createGain(), master=ctx.createGain();
+    bass.type='lowshelf'; bass.frequency.value=200;
+    mid.type='peaking'; mid.frequency.value=1200; mid.Q.value=0.9;
+    treble.type='highshelf'; treble.frequency.value=3500;
+    comp.threshold.value=-24; comp.knee.value=24; comp.ratio.value=3; comp.attack.value=0.005; comp.release.value=0.2;
+    convolver.buffer=impulse(1.8,2.0); delay.delayTime.value=0.22; feedback.gain.value=0.3;
+    delay.connect(feedback); feedback.connect(delay);
+    mixBus.connect(inputGain); inputGain.connect(bass); bass.connect(mid); mid.connect(treble); treble.connect(comp);
+    comp.connect(dry); dry.connect(out);
+    comp.connect(convolver); convolver.connect(reverbWet); reverbWet.connect(out);
+    comp.connect(delay); delay.connect(echoWet); echoWet.connect(out);
+    out.connect(master); master.connect(ctx.destination);
+    dry.gain.value=1; reverbWet.gain.value=0; echoWet.gain.value=0; out.gain.value=1; master.gain.value=0;
+    chain={mixBus,inputGain,bass,mid,treble,comp,dry,reverbWet,echoWet,convolver,delay,feedback,out,master};
+  }
+  function impulse(seconds,decay){
+    const rate=ctx.sampleRate, len=Math.max(1,Math.floor(rate*seconds)), buf=ctx.createBuffer(2,len,rate);
+    for(let ch=0;ch<2;ch++){ const d=buf.getChannelData(ch);
+      for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,decay); }
+    return buf;
+  }
+  function applyShared(p){
+    if(!chain) return;
+    const t=ctx.currentTime, set=(pm,v)=>pm.setTargetAtTime(v,t,0.02);
+    if(p.reverb!=null) set(chain.reverbWet.gain,p.reverb*0.9);
+    if(p.echo!=null) set(chain.echoWet.gain,p.echo*0.6);
+    if(p.echoTime!=null) set(chain.delay.delayTime,0.08+p.echoTime*0.5);
+    if(p.echoFeed!=null) set(chain.feedback.gain,p.echoFeed*0.75);
+    if(p.bass!=null) set(chain.bass.gain,(p.bass-0.5)*24);
+    if(p.mid!=null) set(chain.mid.gain,(p.mid-0.5)*24);
+    if(p.treble!=null) set(chain.treble.gain,(p.treble-0.5)*24);
+    if(p.compress!=null) set(chain.comp.ratio,p.compress?4:1);
+    if(p.reverbSize!=null) chain.convolver.buffer=impulse(0.4+p.reverbSize*3.0,2.0);
+    const wet=(p.reverb??0)*0.9+(p.echo??0)*0.6;
+    set(chain.dry.gain, Math.max(0.35, 1-wet*0.45));
+  }
+  function tryActivateFX(){
+    if(usingFX || !ctx || ctx.state!=='running' || !chain) return;
+    usingFX=true; chain.master.gain.value=1;
+    Object.values(mics).forEach(m=>{ if(m.audio) m.audio.muted=true; applyLevel(m); });
+  }
+  function unlockAudio(){ if(ctx) ctx.resume().then(tryActivateFX).catch(()=>{}); }
+  ['click','keydown','touchstart','pointerdown'].forEach(ev=>document.addEventListener(ev,()=>{ if(!usingFX) unlockAudio(); }));
+  setInterval(()=>{ if(ctx && !usingFX) unlockAudio(); }, 2000);
+
+  /* ---- bottom status bar ---- */
   function setBar(cls, html, stat){
     const bar=g('micbar');
-    bar.className = 'micbar' + (cls?(' '+cls):'');
-    g('micText').innerHTML = html;
-    g('micStat').textContent = stat || '';
-    g('micBtn').textContent = live ? 'Disconnect' : 'Pair iPhone';
-    g('micBtn').onclick = live ? disconnect : pair;
-    g('micBtn').className = live ? '' : 'go';
+    bar.className='micbar'+(cls?(' '+cls):'');
+    g('micText').innerHTML=html; g('micStat').textContent=stat||'';
+    const n=Object.values(mics).filter(m=>m.live).length;
+    g('micBtn').textContent = myCode ? (n ? `Singers (${n})` : 'Add singers') : 'Pair iPhone';
+    g('micBtn').onclick = pair;
+    g('micBtn').className = n ? '' : 'go';
+  }
+  function renderBar(){
+    const liveM=Object.values(mics).filter(m=>m.live);
+    if(!liveM.length){ setBar('', myCode?'Wireless mic: <b>waiting for a phone…</b>':'Wireless mic: <b>not connected</b>', myCode?('code '+myCode):''); return; }
+    const n=liveM.length, worst=Math.max(0,...liveM.map(m=>m.jitter||0));
+    const stat=`${n} mic${n>1?'s':''}` + (worst?`  ·  ${Math.round(worst)}ms`:'');
+    if(worst<=10) setBar('live',`🎤 <b>${n} singing</b> — solid connection`, stat);
+    else if(worst<=30) setBar('fair',`🎤 <b>${n} singing</b> — a little unsteady`, stat);
+    else setBar('poor',`🎤 <b>${n} singing</b> — weak Wi-Fi, try 5 GHz`, stat);
   }
 
-  /* -- effects chain (synth reverb/echo/EQ, all in-browser) -- */
-  const FX = {
-    ctx:null, nodes:null,
-    build(stream){
-      const ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
-      const src=ctx.createMediaStreamSource(stream);
-      const inputGain=ctx.createGain(), bass=ctx.createBiquadFilter(), mid=ctx.createBiquadFilter(),
-            treble=ctx.createBiquadFilter(), comp=ctx.createDynamicsCompressor(),
-            dry=ctx.createGain(), reverbWet=ctx.createGain(), echoWet=ctx.createGain(),
-            convolver=ctx.createConvolver(), delay=ctx.createDelay(1.0), feedback=ctx.createGain(),
-            out=ctx.createGain(), master=ctx.createGain(), analyser=ctx.createAnalyser();
-      analyser.fftSize=256;
-      bass.type='lowshelf'; bass.frequency.value=200;
-      mid.type='peaking'; mid.frequency.value=1200; mid.Q.value=0.9;
-      treble.type='highshelf'; treble.frequency.value=3500;
-      comp.threshold.value=-24; comp.knee.value=24; comp.ratio.value=3; comp.attack.value=0.005; comp.release.value=0.2;
-      convolver.buffer=this.impulse(ctx,1.8,2.0);
-      delay.delayTime.value=0.22; feedback.gain.value=0.3; delay.connect(feedback); feedback.connect(delay);
-      src.connect(inputGain); inputGain.connect(bass); bass.connect(mid); mid.connect(treble); treble.connect(comp);
-      comp.connect(dry); dry.connect(out);
-      comp.connect(convolver); convolver.connect(reverbWet); reverbWet.connect(out);
-      comp.connect(delay); delay.connect(echoWet); echoWet.connect(out);
-      out.connect(analyser); out.connect(master); master.connect(ctx.destination);
-      dry.gain.value=1; reverbWet.gain.value=0; echoWet.gain.value=0; out.gain.value=1; master.gain.value=0;
-      this.ctx=ctx; this.nodes={inputGain,bass,mid,treble,comp,dry,reverbWet,echoWet,convolver,delay,feedback,out,master,analyser};
-      ctx.resume().then(activateFX).catch(()=>{});
-      return analyser;
-    },
-    impulse(ctx,seconds,decay){
-      const rate=ctx.sampleRate, len=Math.max(1,Math.floor(rate*seconds)), buf=ctx.createBuffer(2,len,rate);
-      for(let ch=0;ch<2;ch++){ const d=buf.getChannelData(ch);
-        for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,decay); }
-      return buf;
-    },
-    apply(p){
-      if(!this.nodes) return;
-      const n=this.nodes, t=this.ctx.currentTime, set=(pm,v)=>pm.setTargetAtTime(v,t,0.02);
-      if(p.volume!=null) set(n.out.gain,p.volume*2);
-      if(p.reverb!=null) set(n.reverbWet.gain,p.reverb*0.9);
-      if(p.echo!=null) set(n.echoWet.gain,p.echo*0.6);
-      if(p.echoTime!=null) set(n.delay.delayTime,0.08+p.echoTime*0.5);
-      if(p.echoFeed!=null) set(n.feedback.gain,p.echoFeed*0.75);
-      if(p.bass!=null) set(n.bass.gain,(p.bass-0.5)*24);
-      if(p.mid!=null) set(n.mid.gain,(p.mid-0.5)*24);
-      if(p.treble!=null) set(n.treble.gain,(p.treble-0.5)*24);
-      if(p.compress!=null) set(n.comp.ratio,p.compress?4:1);
-      if(p.reverbSize!=null) n.convolver.buffer=this.impulse(this.ctx,0.4+p.reverbSize*3.0,2.0);
-      const wet=(p.reverb??0)*0.9+(p.echo??0)*0.6;
-      set(n.dry.gain, Math.max(0.35, 1-wet*0.45));
-    }
-  };
-  function activateFX(){
-    if(usingFX || !FX.ctx || FX.ctx.state!=='running' || !FX.nodes) return;
-    usingFX=true; g('micAudio').muted=true; FX.nodes.master.gain.value=1;
+  /* ---- room / pairing ---- */
+  async function ensureRoom(){
+    if(myCode) return;
+    const kept = localStorage.getItem('imicobo.screencode') || '';
+    const s = await (await fetch('/session'+(kept?`?code=${encodeURIComponent(kept)}`:''),{method:'POST'})).json();
+    myCode=s.code; localStorage.setItem('imicobo.screencode', myCode);
+    poll=setInterval(tick,900); statsTimer=setInterval(updateStats,1000);
   }
-  function unlockAudio(){ if(FX.ctx) FX.ctx.resume().then(activateFX).catch(()=>{}); }
-  ['click','keydown','touchstart','pointerdown'].forEach(ev=>document.addEventListener(ev,()=>{ if(!usingFX) unlockAudio(); }));
-
-  /* -- pairing -- */
   async function pair(){
     openModal();
     try{
-      const kept = localStorage.getItem('imicobo.screencode') || '';
-      const s = await (await fetch('/session' + (kept ? `?code=${encodeURIComponent(kept)}` : ''),
-                                   {method:'POST'})).json();
-      myCode = s.code;
-      localStorage.setItem('imicobo.screencode', myCode);   // same code next time
-      g('pairCode').textContent = myCode.split('').join(' ');
+      await ensureRoom();
+      g('pairCode').textContent=myCode.split('').join(' ');
       g('pairCode').classList.remove('wait');
-      try{
-        const payload = `imicobo://pair?h=${location.host}&c=${myCode}`;
-        g('pairQR').innerHTML = QR.svg(payload, 200);
-        g('pairQR').classList.add('show');
+      try{ g('pairQR').innerHTML=QR.svg(`imicobo://pair?h=${location.host}&c=${myCode}`,200); g('pairQR').classList.add('show'); }catch(_){}
+      renderRoster();
+    }catch(e){ g('pairHint').textContent='Relay not reachable — is the server running?'; }
+  }
+
+  async function tick(){
+    if(!myCode) return;
+    let s; try{ s=await (await fetch(`/session?code=${myCode}`)).json(); }catch(_){ return; }
+    if(!s.active){ return; }
+    const live=new Set();
+    for(const m of (s.mics||[])){
+      live.add(m.id);
+      if(m.name && mics[m.id]) mics[m.id].name=m.name;
+      if(m.hasOffer && !mics[m.id]) startMic(m.id, m.name);
+    }
+    for(const id of Object.keys(mics)) if(!live.has(id)) removeMic(id);
+    renderRoster();
+  }
+
+  async function startMic(id, name){
+    const m={ pc:null, name:name||('Mic '+id), gain:null, src:null, audio:null,
+              muted:false, volume:0.5, jitter:null, live:false };
+    mics[id]=m;
+    const pc=new RTCPeerConnection(CFG); m.pc=pc;
+    pc.ondatachannel=e=>{ e.channel.onmessage=ev=>{
+      try{ const p=JSON.parse(ev.data);
+        if(p.muted!=null) m.muted=!!p.muted;
+        if(p.volume!=null) m.volume=p.volume;
+        applyLevel(m); applyShared(p); unlockAudio(); renderRoster();
       }catch(_){}
-      g('pairHint').textContent = 'Waiting for your phone…';
-      setBar('', 'Wireless mic: <b>waiting for phone…</b>', 'code '+myCode);
-      poll = setInterval(checkSession, 900);
-    }catch(e){
-      g('pairHint').textContent = 'Relay not reachable — is the server running?';
-    }
-  }
-  async function checkSession(){
-    if(live || !myCode) return;
-    try{
-      const s = await (await fetch(`/session?code=${myCode}`)).json();
-      if(!s.active){ g('pairHint').textContent='This code expired — close and try again.'; return; }
-      if(s.joined && !pc){ g('pairHint').textContent='Phone connected — starting audio…'; startWebRTC(); }
-    }catch(e){}
-  }
-  async function startWebRTC(){
-    pc=new RTCPeerConnection(CFG);
-    pc.ondatachannel = e => { e.channel.onmessage = m => {
-      try{ const p=JSON.parse(m.data); FX.apply(p); unlockAudio(); }catch(_){}
     };};
-    pc.ontrack = e => {
-      try{ const r=pc.getReceivers().find(x=>x.track&&x.track.kind==='audio');
-           if(r){ if('jitterBufferTarget' in r) r.jitterBufferTarget=0; if('playoutDelayHint' in r) r.playoutDelayHint=0; } }catch(_){}
-      const a=g('micAudio'); a.srcObject=e.streams[0]; a.muted=false; a.play().catch(()=>{});
-      FX.build(e.streams[0]);
-    };
-    pc.onconnectionstatechange = ()=>{
-      if(pc.connectionState==='connected') goLive();
-      else if(pc.connectionState==='failed'){ setBar('poor','Wireless mic: <b>connection failed</b>'); }
-    };
-    let offer=null;
-    for(let i=0;i<60 && !offer;i++){
-      const d=await (await fetch(`/offer?code=${myCode}`)).json();
-      if(d.sdp) offer=JSON.parse(d.sdp); else await new Promise(r=>setTimeout(r,500));
-    }
-    if(!offer){ g('pairHint').textContent='No offer from phone.'; return; }
-    await pc.setRemoteDescription(offer);
-    const ans=await pc.createAnswer(); await pc.setLocalDescription(ans); await iceDone(pc);
-    await fetch(`/answer?code=${myCode}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pc.localDescription)});
+    pc.ontrack=e=>attachMic(id,e.streams[0]);
+    pc.onconnectionstatechange=()=>{ const st=pc.connectionState;
+      if(st==='connected'){ m.live=true; renderBar(); } else if(st==='failed'){ removeMic(id); } };
+    try{
+      const d=await (await fetch(`/offer?code=${myCode}&mic=${id}`)).json();
+      if(!d.sdp){ removeMic(id); return; }
+      await pc.setRemoteDescription(JSON.parse(d.sdp));
+      const ans=await pc.createAnswer(); await pc.setLocalDescription(ans); await iceDone(pc);
+      await fetch(`/answer?code=${myCode}&mic=${id}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pc.localDescription)});
+    }catch(e){ removeMic(id); }
+  }
+  function attachMic(id, stream){
+    const m=mics[id]; if(!m) return;
+    const a=new Audio(); a.srcObject=stream; a.autoplay=true; a.muted=false; a.play().catch(()=>{}); m.audio=a;
+    if(!ctx) buildChain();
+    const src=ctx.createMediaStreamSource(stream), gg=ctx.createGain();
+    src.connect(gg); gg.connect(chain.mixBus); m.src=src; m.gain=gg;
+    try{ const r=m.pc.getReceivers().find(x=>x.track&&x.track.kind==='audio');
+         if(r){ if('jitterBufferTarget' in r) r.jitterBufferTarget=0; if('playoutDelayHint' in r) r.playoutDelayHint=0; } }catch(_){}
+    applyLevel(m); tryActivateFX();
+  }
+  function applyLevel(m){
+    const v = m.muted ? 0 : m.volume*2;
+    if(m.gain && ctx) m.gain.gain.setTargetAtTime(v, ctx.currentTime, 0.02);
+    if(m.audio){ if(usingFX){ m.audio.muted=true; } else { m.audio.muted=m.muted; m.audio.volume=Math.min(1,Math.max(0,m.volume*2)); } }
+  }
+  function removeMic(id){
+    const m=mics[id]; if(!m) return;
+    try{ m.pc && m.pc.close(); }catch(_){}
+    try{ m.src && m.src.disconnect(); m.gain && m.gain.disconnect(); }catch(_){}
+    if(m.audio) m.audio.srcObject=null;
+    delete mics[id]; renderRoster(); renderBar();
   }
   function iceDone(pc){ return new Promise(res=>{
     if(pc.iceGatheringState==='complete') return res();
@@ -671,49 +718,55 @@ const MIC = (() => {
     pc.addEventListener('icegatheringstatechange',c); setTimeout(res,4000);
   });}
 
-  function goLive(){
-    live=true; clearInterval(poll); closeModal();
-    setBar('live','Wireless mic: <b>connected</b> · measuring…');
-    statsTimer=setInterval(stats,1000);
+  function qClass(j){ if(j==null) return ''; if(j<=10) return 'ok'; if(j<=30) return 'fair'; return 'poor'; }
+  function esc(x){ return (x||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  function renderRoster(){
+    const box=g('pairRoster'); if(!box) return;
+    const ids=Object.keys(mics).sort((a,b)=>+a-+b); box.innerHTML='';
+    for(const id of ids){ const m=mics[id];
+      const row=document.createElement('div'); row.className='pmic'+(m.muted?' muted':'');
+      const q=qClass(m.jitter), st=m.live?(m.jitter!=null?`${Math.round(m.jitter)}ms`:'live'):'connecting…';
+      row.innerHTML=`<div class="who"><div class="nm">🎤 ${esc(m.name)}</div><div class="st ${q}">${st}</div></div>`;
+      const vol=document.createElement('input'); vol.type='range'; vol.min=0; vol.max=1; vol.step=0.01; vol.value=m.volume;
+      vol.oninput=()=>{ m.volume=+vol.value; applyLevel(m); };
+      const mute=document.createElement('button'); mute.className='mute'; mute.textContent=m.muted?'Unmute':'Mute';
+      mute.onclick=()=>{ m.muted=!m.muted; applyLevel(m); renderRoster(); };
+      row.appendChild(vol); row.appendChild(mute); box.appendChild(row);
+    }
+    const n=ids.length;
+    g('pairHint').textContent = n ? `${n} singer${n>1?'s':''} connected — scan again to add more (up to 6).`
+                                  : 'Waiting for the first phone to join…';
+    g('pairDisconnect').style.display = n ? 'block' : 'none';
+    renderBar();
   }
-  function disconnect(){
-    live=false; clearInterval(poll); clearInterval(statsTimer);
+  async function updateStats(){
+    for(const id of Object.keys(mics)){ const m=mics[id];
+      if(!m.pc || m.pc.connectionState!=='connected') continue;
+      try{ const r=m.pc.getReceivers().find(x=>x.track&&x.track.kind==='audio');
+           if(r){ if('jitterBufferTarget' in r) r.jitterBufferTarget=0; if('playoutDelayHint' in r) r.playoutDelayHint=0; }
+           const st=await m.pc.getStats(); let jit=null;
+           st.forEach(s=>{ if(s.type==='inbound-rtp'&&s.kind==='audio'&&s.jitter!=null) jit=s.jitter*1000; });
+           m.jitter=jit;
+      }catch(_){}
+    }
+    renderRoster();
+  }
+
+  /* ---- teardown ---- */
+  function disconnect(){ disconnectAll(); }
+  function disconnectAll(){
+    for(const id of Object.keys(mics)) removeMic(id);
     if(myCode) fetch(`/cancel?code=${myCode}`,{method:'POST'}).catch(()=>{});
-    try{ pc && pc.close(); }catch(_){} pc=null; myCode=null;
-    const a=g('micAudio'); a.srcObject=null;
-    setBar('','Wireless mic: <b>not connected</b>');
+    clearInterval(poll); clearInterval(statsTimer); poll=statsTimer=null;
+    myCode=null; localStorage.removeItem('imicobo.screencode');
+    closeModal(); setBar('','Wireless mic: <b>not connected</b>');
   }
 
-  /* -- quality: judge jitter, drive the bar -- */
-  const JITTER_GOOD=10, JITTER_FAIR=30, history=[];
-  async function stats(){
-    if(!pc || pc.connectionState!=='connected') return;
-    // Keep the receive buffer from creeping up — the cause of the slowly
-    // growing delay. Re-assert minimal buffering every tick so a rough Wi-Fi
-    // patch can't leave a permanent lag (what mute/unmute used to reset).
-    try{ const rr = pc.getReceivers().find(x=>x.track&&x.track.kind==='audio');
-         if(rr){ if('jitterBufferTarget' in rr) rr.jitterBufferTarget=0;
-                 if('playoutDelayHint' in rr)  rr.playoutDelayHint=0; } }catch(_){}
-    const st=await pc.getStats(); let rtt=null, jit=null;
-    st.forEach(r=>{
-      if(r.type==='candidate-pair'&&r.nominated&&r.currentRoundTripTime!=null) rtt=r.currentRoundTripTime;
-      if(r.type==='inbound-rtp'&&r.kind==='audio'&&r.jitter!=null) jit=r.jitter;
-    });
-    const statTxt = (rtt!=null?`${(rtt*1000).toFixed(0)}ms rtt`:'') + (jit!=null?`  ·  ${(jit*1000).toFixed(0)}ms jitter`:'');
-    if(jit==null){ setBar('live','Wireless mic: <b>connected</b>', statTxt); return; }
-    history.push(jit*1000); if(history.length>40) history.shift();
-    if(history.length<4){ setBar('live','Wireless mic: <b>connected</b> · measuring…', statTxt); return; }
-    const recent=history.slice(-12), avg=recent.reduce((a,b)=>a+b,0)/recent.length, peak=Math.max(...recent);
-    if(avg<=JITTER_GOOD && peak<=JITTER_FAIR) setBar('live','Wireless mic: <b>solid connection</b> — no noticeable delay', statTxt);
-    else if(avg<=JITTER_FAIR)                 setBar('fair','Wireless mic: <b>a little unsteady</b> — move closer to the router', statTxt);
-    else                                       setBar('poor','Wireless mic: <b>weak / congested Wi-Fi</b> — voice may lag, try 5 GHz', statTxt);
-  }
-
-  /* -- modal -- */
+  /* ---- modal: Done only HIDES it; the room + singers stay live ---- */
   function openModal(){ g('pair').classList.add('show'); }
-  function closeModal(){ g('pair').classList.remove('show'); if(!live && myCode){ fetch(`/cancel?code=${myCode}`,{method:'POST'}).catch(()=>{}); clearInterval(poll); myCode=null; if(!live) setBar('','Wireless mic: <b>not connected</b>'); } }
+  function closeModal(){ g('pair').classList.remove('show'); }
 
-  return { pair, disconnect, closeModal };
+  return { pair, disconnect, disconnectAll, closeModal };
 })();
 
 render();

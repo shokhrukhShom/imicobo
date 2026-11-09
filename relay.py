@@ -4,13 +4,15 @@ iMicobo relay + karaoke backend (zero third-party dependencies).
 
 Two jobs in one tiny server, so a $5 box runs the whole thing:
 
-1) MIC PAIRING (unchanged): browser gets a code, the iPhone types it, and the
-   two do a WebRTC handshake through this server. The audio never touches us.
+1) MIC PAIRING — multi-mic. A screen opens a ROOM (one code). Up to 6 phones
+   join the same code; each gets its own mic id and does its own WebRTC
+   handshake with the screen. The screen mixes every mic into one output.
+   The audio never touches this server — only the little handshake blobs do.
 
-2) KARAOKE LOOKUP (new): the frontend asks us to turn a song title into a
-   playable YouTube video. We resolve it ONCE via the free YouTube Data API,
-   then cache the answer on disk so every future visitor is served for free.
-   That single cache is what keeps this inside YouTube's free daily quota.
+2) KARAOKE LOOKUP — turn a song title into a playable YouTube video, resolved
+   ONCE via the free YouTube Data API and cached on disk so every future
+   visitor is served for free. That cache is what keeps us inside the free
+   daily quota.
 
 Run from this folder:
     YT_API_KEY=your_free_key  python3 relay.py
@@ -28,9 +30,10 @@ PORT = int(os.environ.get("PORT", "8080"))
 # exposed in the browser. See README for the 5-minute, no-cost setup.
 YT_API_KEY = os.environ.get("YT_API_KEY", "").strip()
 
-# ---- mic pairing config (from the original relay) ----
+# ---- mic pairing config ----
 CODE_DIGITS = 6                # 6 = 1,000,000 combos (safe on the public relay)
-SESSION_TTL = 15 * 60          # abandoned pairing sessions expire
+SESSION_TTL = 15 * 60          # abandoned rooms expire
+MAX_MICS = 6                   # how many phones can share one screen
 
 # Brute-force guard: cap how many /join attempts one IP can make per minute.
 # Even a short code is unbreakable when guesses are throttled this hard.
@@ -42,7 +45,8 @@ join_lock = threading.Lock()
 CACHE_FILE = os.environ.get("CACHE_FILE", "yt_cache.json")
 CACHE_TTL  = 30 * 24 * 3600    # re-verify a cached video after ~30 days
 
-sessions = {}                  # code -> dict
+# A room is: {"created": ts, "mics": { mic_id: {name, offer, answer, created} }}
+sessions = {}
 cache = {}                     # "resolve:<q>" / "search:<q>" -> {"v": data, "t": ts}
 lock = threading.Lock()
 cache_lock = threading.Lock()
@@ -87,19 +91,11 @@ def cache_put(key, value):
 
 # ---------------------------------------------------------------- youtube calls
 def yt_search(query, limit=8):
-    """Return a list of {id,title,channel,thumb} for a karaoke search.
-
-    Always appends 'karaoke' and asks YouTube for embeddable videos only, so we
-    never hand the frontend a video that refuses to play in an iframe.
-    """
+    """Return a list of {id,title,channel,thumb} for a karaoke search."""
     q = query if "karaoke" in query.lower() else query + " karaoke"
     params = urllib.parse.urlencode({
-        "part": "snippet",
-        "type": "video",
-        "videoEmbeddable": "true",
-        "maxResults": str(limit),
-        "q": q,
-        "key": YT_API_KEY,
+        "part": "snippet", "type": "video", "videoEmbeddable": "true",
+        "maxResults": str(limit), "q": q, "key": YT_API_KEY,
     })
     url = "https://www.googleapis.com/youtube/v3/search?" + params
     req = urllib.request.Request(url, headers={"User-Agent": "imicobo/1.0"})
@@ -113,25 +109,16 @@ def yt_search(query, limit=8):
             continue
         thumbs = sn.get("thumbnails") or {}
         thumb = ((thumbs.get("medium") or thumbs.get("default") or {}).get("url", ""))
-        out.append({
-            "id": vid,
-            "title": sn.get("title", ""),
-            "channel": sn.get("channelTitle", ""),
-            "thumb": thumb,
-        })
+        out.append({"id": vid, "title": sn.get("title", ""),
+                    "channel": sn.get("channelTitle", ""), "thumb": thumb})
     return out
 
 
 def itunes_art(title, artist):
-    """Free album artwork from Apple's iTunes Search API — no key, no quota.
-
-    Returns a big square cover URL (served from Apple's CDN, so the browser
-    loads the image directly). None if nothing matches.
-    """
+    """Free album artwork from Apple's iTunes Search API — no key, no quota."""
     term = (artist + " " + title).strip()
-    params = urllib.parse.urlencode({
-        "term": term, "entity": "song", "limit": "1", "country": "US",
-    })
+    params = urllib.parse.urlencode({"term": term, "entity": "song",
+                                     "limit": "1", "country": "US"})
     url = "https://itunes.apple.com/search?" + params
     req = urllib.request.Request(url, headers={"User-Agent": "imicobo/1.0"})
     with urllib.request.urlopen(req, timeout=5) as r:
@@ -142,8 +129,24 @@ def itunes_art(title, artist):
     art = items[0].get("artworkUrl100") or items[0].get("artworkUrl60")
     if not art:
         return None
-    # bump the thumbnail up to a crisp 400px cover
     return art.replace("100x100bb", "400x400bb").replace("60x60bb", "400x400bb")
+
+
+# ---------------------------------------------------------------- room helpers
+def _assign_mic_id(room):
+    """Smallest free id 1..MAX_MICS as a string, or None if the room is full."""
+    used = set(room["mics"].keys())
+    for i in range(1, MAX_MICS + 1):
+        if str(i) not in used:
+            return str(i)
+    return None
+
+
+def _roster(room):
+    """Public view the screen polls: who's here and whether their offer is ready."""
+    return [{"id": mid, "name": m.get("name", ""),
+             "hasOffer": m.get("offer") is not None}
+            for mid, m in sorted(room["mics"].items(), key=lambda kv: int(kv[0]))]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -164,7 +167,6 @@ class Handler(BaseHTTPRequestHandler):
         return self._q(u, "code")
 
     def _client_ip(self):
-        # Caddy forwards the real client IP here; fall back to the socket peer.
         xff = self.headers.get("X-Forwarded-For", "")
         if xff:
             return xff.split(",")[0].strip()
@@ -192,7 +194,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 res = yt_search(q, limit=1)
                 vid = res[0]["id"] if res else None
-                cache_put(key, vid)          # cache misses too (avoids re-querying dead songs)
+                cache_put(key, vid)
                 return self._json({"id": vid})
             except Exception as e:
                 return self._json({"error": "youtube unavailable", "detail": str(e)}, 502)
@@ -223,7 +225,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"url": None})
             ck = "art:" + (t + "|" + a).lower()
             hit = cache_get(ck)
-            if hit is not None:                     # "" means "looked up, none found"
+            if hit is not None:
                 return self._json({"url": hit or None, "cached": True})
             try:
                 art = itunes_art(t, a)
@@ -232,29 +234,34 @@ class Handler(BaseHTTPRequestHandler):
             cache_put(ck, art or "")
             return self._json({"url": art})
 
-        # ---- mic pairing (unchanged) ----
+        # ---- mic pairing ----
         if p == "/ping":
-            return self._json({"app": "imicobo", "version": 1, "digits": CODE_DIGITS})
+            return self._json({"app": "imicobo", "version": 2,
+                               "digits": CODE_DIGITS, "maxMics": MAX_MICS})
 
+        # screen polls the room: who's connected + whose offer is ready
         if p == "/session":
             code = self._code(u)
             with lock:
-                s = sessions.get(code)
-                if not s:
+                room = sessions.get(code)
+                if not room:
                     return self._json({"active": False})
-                s["created"] = time.time()          # heartbeat: an open screen never expires
-                return self._json({"active": True, "joined": s["joined"]})
+                room["created"] = time.time()        # heartbeat: open screen never expires
+                return self._json({"active": True, "max": MAX_MICS,
+                                   "mics": _roster(room)})
 
+        # one mic's offer (screen reads) / answer (phone reads)
         if p in ("/offer", "/answer"):
             code = self._code(u)
+            mic = self._q(u, "mic") or "1"
             with lock:
-                s = sessions.get(code)
-                return self._json({"sdp": s.get(p.strip("/")) if s else None})
+                room = sessions.get(code)
+                m = room["mics"].get(mic) if room else None
+                return self._json({"sdp": m.get(p.strip("/")) if m else None})
 
         # ---- static files (index.html, connect.html, qr.js, ...) ----
         name = p.lstrip("/") or "index.html"
         name = os.path.normpath(name)
-        # only ever serve front-end assets — never source, cache, or dotfiles
         ALLOWED = (".html", ".js", ".css", ".svg", ".png", ".ico", ".jpg", ".webmanifest")
         if (name.startswith("..") or os.path.isabs(name) or "/" in name
                 or not name.endswith(ALLOWED)):
@@ -285,36 +292,34 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(n).decode() if n else ""
 
+        # screen opens / resumes a room
         if p == "/session":
-            # The browser may pass ?code=<remembered> to keep a STABLE code across
-            # refreshes / restarts. Resume it if it exists, recreate it if the
-            # server forgot it, otherwise mint a fresh random one.
             want = self._code(u)
             with lock:
                 now = time.time()
                 for c in [c for c, s in sessions.items() if now - s["created"] > SESSION_TTL]:
                     sessions.pop(c, None)
+                # Resume a remembered code (fresh, empty roster for a reload),
+                # recreate it if the server forgot it, else mint a new one.
                 if want and want in sessions:
-                    s = sessions[want]                       # resume — reset for a fresh handshake
-                    s["joined"] = False; s["offer"] = None
-                    s["answer"] = None; s["created"] = now
-                    return self._json({"code": want, "digits": CODE_DIGITS, "resumed": True})
+                    sessions[want] = {"created": now, "mics": {}}
+                    return self._json({"code": want, "digits": CODE_DIGITS,
+                                       "max": MAX_MICS, "resumed": True})
                 if want and len(want) == CODE_DIGITS and want.isdigit():
-                    sessions[want] = {"joined": False, "offer": None,
-                                      "answer": None, "created": now}   # recreate remembered code
-                    return self._json({"code": want, "digits": CODE_DIGITS, "recreated": True})
+                    sessions[want] = {"created": now, "mics": {}}
+                    return self._json({"code": want, "digits": CODE_DIGITS,
+                                       "max": MAX_MICS, "recreated": True})
                 lo, hi = 10 ** (CODE_DIGITS - 1), 10 ** CODE_DIGITS - 1
                 code = str(random.randint(lo, hi))
                 for _ in range(50):
                     if code not in sessions:
                         break
                     code = str(random.randint(lo, hi))
-                sessions[code] = {"joined": False, "offer": None,
-                                  "answer": None, "created": now}
-                return self._json({"code": code, "digits": CODE_DIGITS})
+                sessions[code] = {"created": now, "mics": {}}
+                return self._json({"code": code, "digits": CODE_DIGITS, "max": MAX_MICS})
 
+        # a phone joins the room -> gets its own mic id (or "party full")
         if p == "/join":
-            # throttle brute-force guessing per IP
             ip = self._client_ip()
             now = time.time()
             with join_lock:
@@ -326,28 +331,53 @@ class Handler(BaseHTTPRequestHandler):
                 hits.append(now)
                 join_hits[ip] = hits
             code = self._code(u)
+            name = self._q(u, "name")[:24]
             with lock:
-                s = sessions.get(code)
-                if not s:
+                room = sessions.get(code)
+                if not room:
                     return self._json({"ok": False, "error": "That code isn't valid."}, 404)
-                if s["joined"]:
-                    return self._json({"ok": False, "error": "That screen is already paired."}, 409)
-                s["joined"] = True
-                return self._json({"ok": True})
+                mic = _assign_mic_id(room)
+                if mic is None:
+                    return self._json({"ok": False,
+                                       "error": f"This screen is full ({MAX_MICS} singers)."}, 409)
+                room["mics"][mic] = {"name": name, "offer": None,
+                                     "answer": None, "created": now}
+                return self._json({"ok": True, "mic": mic,
+                                   "count": len(room["mics"]), "max": MAX_MICS})
 
+        # a mic posts its offer (phone) or answer (screen)
         if p in ("/offer", "/answer"):
             code = self._code(u)
+            mic = self._q(u, "mic") or "1"
             with lock:
-                s = sessions.get(code)
-                if not s:
+                room = sessions.get(code)
+                m = room["mics"].get(mic) if room else None
+                if not m:
                     return self._json({"ok": False}, 404)
-                s[p.strip("/")] = raw
+                m[p.strip("/")] = raw
             return self._json({"ok": True})
 
+        # a phone leaves -> free just its slot; others stay connected
+        if p == "/leave":
+            code = self._code(u)
+            mic = self._q(u, "mic")
+            with lock:
+                room = sessions.get(code)
+                if room and mic in room["mics"]:
+                    room["mics"].pop(mic, None)
+            return self._json({"ok": True})
+
+        # screen tears the whole room down (or one mic if ?mic= given)
         if p == "/cancel":
             code = self._code(u)
+            mic = self._q(u, "mic")
             with lock:
-                sessions.pop(code, None)
+                if mic:
+                    room = sessions.get(code)
+                    if room:
+                        room["mics"].pop(mic, None)
+                else:
+                    sessions.pop(code, None)
             return self._json({"ok": True})
 
         self._json({"error": "not found"}, 404)
@@ -377,11 +407,12 @@ def lan_ips():
 if __name__ == "__main__":
     load_cache()
     ips = lan_ips()
-    print("\n  iMicobo — karaoke + mic relay")
-    print("  ─────────────────────────────")
+    print("\n  iMicobo — karaoke + multi-mic relay")
+    print("  ───────────────────────────────────")
     print(f"  Open on this computer / TV:  http://localhost:{PORT}/")
     if ips:
         print(f"  Or from another device:      http://{ips[0]}:{PORT}/")
+    print(f"  Up to {MAX_MICS} phones can share one screen code.")
     print(f"  YouTube key: {'set ✓ (in-app search + playback)' if YT_API_KEY else 'NOT set — search opens YouTube instead'}")
     print(f"  Cache file:  {CACHE_FILE} ({len(cache)} entries)")
     print("\n  Ctrl-C to stop.\n")
