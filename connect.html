@@ -25,7 +25,7 @@
   .sub{color:var(--dim);font-size:15px;margin:0 0 26px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:30px 26px}
   .lbl{color:var(--dim);font-size:14px}
-  .code{font:700 58px var(--mono);letter-spacing:12px;margin:10px 0 4px;color:var(--accent)}
+  .code{font:700 44px var(--mono);letter-spacing:10px;margin:10px 0 4px;color:var(--accent);white-space:nowrap}
   .code.waiting{color:var(--dim);opacity:.35}
   .qr{margin:16px auto 6px;width:200px;height:200px;background:#fff;border-radius:14px;padding:10px;display:none}
   .qr.show{display:block}.qr svg{display:block;width:100%;height:100%}
@@ -151,9 +151,9 @@ async function boot(){
     const kept = localStorage.getItem('imicobo.screencode') || '';
     const s = await (await fetch('/session' + (kept?`?code=${encodeURIComponent(kept)}`:''),
                                  {method:'POST'})).json();
-    myCode = s.code; const qrHost=(s.host&&!/^(localhost|127\.)/.test(s.host))?s.host:location.host;
+    myCode = s.code; const qrHost = /^(localhost|127\.|0\.0\.0\.0)/.test(location.hostname) ? (s.host||location.host) : location.host;
     localStorage.setItem('imicobo.screencode', myCode);
-    $('code').textContent = myCode.split('').join(' ');
+    $('code').textContent = myCode;
     $('code').classList.remove('waiting');
     try{ $('qr').innerHTML = QR.svg(`imicobo://pair?h=${qrHost}&c=${myCode}`,200); $('qr').classList.add('show'); }catch(_){}
     setStatus('Waiting for singers…','mid');

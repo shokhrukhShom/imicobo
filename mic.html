@@ -87,7 +87,8 @@ async function join(){
     micID = j.mic;
 
     stream = await navigator.mediaDevices.getUserMedia({ audio:{
-      echoCancellation:false, noiseSuppression:false, autoGainControl:true, channelCount:1 }});
+      echoCancellation:false, noiseSuppression:false, autoGainControl:true,
+      channelCount:1, sampleRate:48000 }});
 
     pc = new RTCPeerConnection(CFG);
     stream.getTracks().forEach(t => pc.addTrack(t, stream));
@@ -104,7 +105,15 @@ async function join(){
     $('form').classList.add('hide'); $('live').classList.add('show');
     $('title').textContent = 'Microphone';
 
-    const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+    const offer = await pc.createOffer();
+    offer.sdp = tuneOpus(offer.sdp);              // 256k, 10ms frames, FEC — matches the app
+    await pc.setLocalDescription(offer);
+    try{
+      const snd = pc.getSenders().find(s=>s.track && s.track.kind==='audio');
+      if(snd){ const pr=snd.getParameters(); if(!pr.encodings||!pr.encodings.length) pr.encodings=[{}];
+               pr.encodings[0].maxBitrate=256000; pr.encodings[0].networkPriority='high';
+               await snd.setParameters(pr); }
+    }catch(_){}
     await iceDone(pc);
     await fetch(`/offer?code=${code}&mic=${micID}`,{method:'POST',
       headers:{'Content-Type':'application/json'}, body:JSON.stringify(pc.localDescription)});
@@ -121,6 +130,21 @@ async function join(){
   }
 }
 
+function tuneOpus(sdp){
+  const m = sdp.match(/a=rtpmap:(\d+) opus/i); if(!m) return sdp;
+  const pt = m[1];
+  return sdp.split('\r\n').flatMap(line=>{
+    if(line.startsWith(`a=fmtp:${pt} `)){
+      let l = line;
+      if(!/maxaveragebitrate=/.test(l)) l += ';maxaveragebitrate=256000';
+      if(!/stereo=/.test(l))            l += ';stereo=0';
+      if(!/useinbandfec=/.test(l))      l += ';useinbandfec=1';
+      if(!/minptime=/.test(l))          l += ';minptime=10';
+      return [l, `a=ptime:10`];
+    }
+    return [line];
+  }).join('\r\n');
+}
 function iceDone(pc){ return new Promise(res=>{
   if(pc.iceGatheringState==='complete') return res();
   const c=()=>{ if(pc.iceGatheringState==='complete'){ pc.removeEventListener('icegatheringstatechange',c); res(); } };

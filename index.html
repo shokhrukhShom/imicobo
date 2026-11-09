@@ -145,7 +145,7 @@
     border:none;font:650 15px inherit;border-radius:11px;padding:12px;cursor:pointer}
   .sheet a.cta{display:inline-block;margin-top:6px;color:var(--accent);text-decoration:none;font-weight:600}
   /* pairing */
-  .pcode{font:700 58px var(--mono);letter-spacing:12px;color:var(--accent);margin:14px 0 4px}
+  .pcode{font:700 44px var(--mono);letter-spacing:10px;color:var(--accent);margin:14px 0 4px;white-space:nowrap}
   .pcode.wait{color:var(--dim);opacity:.4}
   .pqr{width:200px;height:200px;background:#fff;border-radius:14px;padding:10px;margin:14px auto 4px;display:none}
   .pqr.show{display:block}.pqr svg{width:100%;height:100%;display:block}
@@ -639,7 +639,9 @@ const MIC = (() => {
     if(myCode) return;
     const kept = localStorage.getItem('imicobo.screencode') || '';
     const s = await (await fetch('/session'+(kept?`?code=${encodeURIComponent(kept)}`:''),{method:'POST'})).json();
-    myCode=s.code; qrHost=(s.host&&!/^(localhost|127\.)/.test(s.host))?s.host:location.host;
+    // On a real domain (imicobo.com) the page's own host IS the reachable address.
+    // The relay's LAN IP is only useful when testing on localhost.
+    myCode=s.code; qrHost = /^(localhost|127\.|0\.0\.0\.0)/.test(location.hostname) ? (s.host||location.host) : location.host;
     localStorage.setItem('imicobo.screencode', myCode);
     poll=setInterval(tick,900); statsTimer=setInterval(updateStats,1000);
   }
@@ -647,7 +649,7 @@ const MIC = (() => {
     openModal();
     try{
       await ensureRoom();
-      g('pairCode').textContent=myCode.split('').join(' ');
+      g('pairCode').textContent=myCode;
       g('pairCode').classList.remove('wait');
       try{ g('pairQR').innerHTML=QR.svg(`imicobo://pair?h=${qrHost}&c=${myCode}`,200); g('pairQR').classList.add('show'); }catch(_){}
       renderRoster();
