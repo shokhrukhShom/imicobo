@@ -90,7 +90,7 @@ const mics = {};           // id -> {pc,name,gain,src,audio,muted,volume,jitter,
                                                        └▶ echo ──┘
    Per-mic volume/mute live on each mic's gain. Reverb/echo/EQ are shared
    (last phone to change them sets the room's vibe) — cheapest + lowest latency. */
-let ctx=null, chain=null, fxWanted=false;
+let ctx=null, chain=null, eqActive=false, wetActive=false, dryTarget=1;
 function buildChain(){
   ctx = new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
   const mixBus=ctx.createGain(), inputGain=ctx.createGain(),
@@ -120,31 +120,40 @@ function impulse(seconds,decay){
   return buf;
 }
 function applyShared(p){
-  fxWanted = (p.reverb>0.02) || (p.echo>0.02)
-    || (p.bass!=null   && Math.abs(p.bass-0.5)>0.03)
-    || (p.mid!=null    && Math.abs(p.mid-0.5)>0.03)
-    || (p.treble!=null && Math.abs(p.treble-0.5)>0.03);
-  if(!chain){ setMode(); return; }
-  const t=ctx.currentTime, set=(pm,v)=>pm.setTargetAtTime(v,t,0.02);
-  if(p.reverb!=null) set(chain.reverbWet.gain,p.reverb*0.9);
-  if(p.echo!=null) set(chain.echoWet.gain,p.echo*0.6);
-  if(p.echoTime!=null) set(chain.delay.delayTime,0.08+p.echoTime*0.5);
-  if(p.echoFeed!=null) set(chain.feedback.gain,p.echoFeed*0.75);
-  if(p.bass!=null) set(chain.bass.gain,(p.bass-0.5)*24);
-  if(p.mid!=null) set(chain.mid.gain,(p.mid-0.5)*24);
-  if(p.treble!=null) set(chain.treble.gain,(p.treble-0.5)*24);
-  if(p.compress!=null) set(chain.comp.ratio,p.compress?4:1);
-  if(p.reverbSize!=null) chain.convolver.buffer=impulse(0.4+p.reverbSize*3.0,2.0);
-  const wet=(p.reverb??0)*0.9+(p.echo??0)*0.6;
-  set(chain.dry.gain, Math.max(0.35, 1-wet*0.45));
+  wetActive = (p.reverb>0.02) || (p.echo>0.02);
+  eqActive  = (p.bass!=null   && Math.abs(p.bass-0.5)>0.03)
+           || (p.mid!=null    && Math.abs(p.mid-0.5)>0.03)
+           || (p.treble!=null && Math.abs(p.treble-0.5)>0.03);
+  if(chain){
+    const t=ctx.currentTime, set=(pm,v)=>pm.setTargetAtTime(v,t,0.02);
+    if(p.reverb!=null) set(chain.reverbWet.gain,p.reverb*0.9);
+    if(p.echo!=null) set(chain.echoWet.gain,p.echo*0.6);
+    if(p.echoTime!=null) set(chain.delay.delayTime,0.08+p.echoTime*0.5);
+    if(p.echoFeed!=null) set(chain.feedback.gain,p.echoFeed*0.75);
+    if(p.bass!=null) set(chain.bass.gain,(p.bass-0.5)*24);
+    if(p.mid!=null) set(chain.mid.gain,(p.mid-0.5)*24);
+    if(p.treble!=null) set(chain.treble.gain,(p.treble-0.5)*24);
+    if(p.compress!=null) set(chain.comp.ratio,p.compress?4:1);
+    if(p.reverbSize!=null) chain.convolver.buffer=impulse(0.4+p.reverbSize*3.0,2.0);
+    const wet=(p.reverb??0)*0.9+(p.echo??0)*0.6;
+    dryTarget = Math.max(0.35, 1-wet*0.45);
+  }
   setMode();
 }
-function usingFX(){ return fxWanted && !!ctx && ctx.state==='running' && !!chain; }
+function currentMode(){
+  if(!ctx || ctx.state!=='running' || !chain) return 'clean';
+  if(eqActive) return 'full';
+  if(wetActive) return 'hybrid';
+  return 'clean';
+}
 function setMode(){
-  const fx = usingFX();
-  if(chain) chain.master.gain.value = fx ? 1 : 0;      // raw <audio> unless effects wanted
-  Object.values(mics).forEach(applyLevel);
-  if(fxWanted && ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{});
+  const mode = currentMode();
+  if(chain){
+    chain.master.gain.value = (mode==='clean') ? 0 : 1;
+    chain.dry.gain.setTargetAtTime(mode==='full' ? dryTarget : 0, ctx.currentTime, 0.02);
+  }
+  Object.values(mics).forEach(m=>applyLevel(m, mode));
+  if((eqActive||wetActive) && ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{});
 }
 function unlockAudio(){ if(ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{}); }
 ['click','keydown','touchstart','pointerdown'].forEach(ev=>
@@ -234,12 +243,12 @@ function attachMic(id, stream){
 }
 
 /* a mic's gain carries its volume+mute; raw <audio> mirrors it until FX is live */
-function applyLevel(m){
-  const fx = usingFX();
+function applyLevel(m, mode){
+  if(mode===undefined) mode = currentMode();
   const v = m.muted ? 0 : m.volume*2;
-  if(m.gain && ctx) m.gain.gain.setTargetAtTime(v, ctx.currentTime, 0.02);
+  if(m.gain && ctx) m.gain.gain.setTargetAtTime((mode==='clean') ? 0 : v, ctx.currentTime, 0.02);
   if(m.audio){
-    if(fx){ m.audio.muted = true; }                    // FX chain carries it
+    if(mode==='full'){ m.audio.muted = true; }
     else { m.audio.muted = m.muted; m.audio.volume = Math.min(1, Math.max(0, m.volume*2)); }
   }
 }
