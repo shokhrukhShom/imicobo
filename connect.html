@@ -155,7 +155,7 @@ async function boot(){
     localStorage.setItem('imicobo.screencode', myCode);
     $('code').textContent = myCode;
     $('code').classList.remove('waiting');
-    try{ $('qr').innerHTML = QR.svg(`imicobo://pair?h=${qrHost}&c=${myCode}`,200); $('qr').classList.add('show'); }catch(_){}
+    try{ $('qr').innerHTML = QR.svg(`${location.origin}/j?c=${myCode}`,200); $('qr').classList.add('show'); }catch(_){}
     setStatus('Waiting for singers…','mid');
     poll = setInterval(tick, 900);
     statsTimer = setInterval(updateStats, 1000);

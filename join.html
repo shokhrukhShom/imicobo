@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Joining iMicobo…</title>
+<meta name="theme-color" content="#0a0c10">
+<style>
+  :root{--bg:#0a0c10;--ink:#e8eef5;--dim:#8593a5;--accent:#5eead4;--line:#2a3340;--panel:#141922}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    display:grid;place-items:center;padding:28px;text-align:center}
+  .wrap{width:min(380px,100%)}
+  .mic{font-size:60px;margin-bottom:10px}
+  h1{font-size:24px;margin:0 0 6px}
+  p{color:var(--dim);margin:0 0 22px}
+  a.btn{display:block;text-decoration:none;background:var(--accent);color:#06231f;
+    font-weight:650;border-radius:12px;padding:14px;margin-top:12px}
+  a.ghost{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
+  .code{font:700 20px ui-monospace,Menlo,monospace;letter-spacing:4px;color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="mic">🎤</div>
+  <h1 id="h">Opening iMicobo…</h1>
+  <p id="p">One sec.</p>
+  <div id="actions"></div>
+</div>
+<script>
+// If the iOS app is installed, iOS opens it via the Universal Link and this
+// page never renders. So reaching this script means: no app (iPhone) → App
+// Store; Android / desktop → the browser mic.
+const APPSTORE = "https://apps.apple.com/us/app/imicobo/id6792993503";
+const code = (new URLSearchParams(location.search).get('c') || '').replace(/\D/g,'').slice(0,6);
+const ua = navigator.userAgent || '';
+const isIOS = (/iPhone|iPad|iPod/.test(ua) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1)) && !window.MSStream;
+const isAndroid = /Android/.test(ua);
+const micURL = '/mic.html' + (code ? ('?c=' + code) : '');
+
+const h=document.getElementById('h'), p=document.getElementById('p'), a=document.getElementById('actions');
+function link(href,label,ghost){ const el=document.createElement('a'); el.className='btn'+(ghost?' ghost':''); el.href=href; el.textContent=label; a.appendChild(el); }
+
+if(isIOS){
+  h.textContent = 'Get iMicobo';
+  p.innerHTML = code ? ('Install the app, then it connects to code <span class="code">'+code+'</span>.')
+                     : 'Install the free app to sing.';
+  link(APPSTORE, 'Open the App Store');
+  link(micURL, 'Or sing in this browser', true);
+  setTimeout(()=>{ location.href = APPSTORE; }, 600);   // auto-redirect
+} else {
+  // Android + desktop → browser mic, code pre-filled
+  h.textContent = 'Opening your microphone…';
+  p.textContent = code ? ('Connecting to code ' + code + '.') : '';
+  link(micURL, 'Continue', false);
+  location.replace(micURL);
+}
+</script>
+</body>
+</html>

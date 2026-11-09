@@ -234,6 +234,33 @@ class Handler(BaseHTTPRequestHandler):
             cache_put(ck, art or "")
             return self._json({"url": art})
 
+        # ---- universal-link plumbing (smart QR) ----
+        # Apple fetches this to learn the app owns imicobo.com/j links.
+        if p in ("/.well-known/apple-app-site-association", "/apple-app-site-association"):
+            try:
+                with open("aasa.json", "rb") as f:
+                    body = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers(); self.wfile.write(body); return
+            except Exception:
+                return self._json({"error": "aasa missing"}, 404)
+
+        # The QR points here. If the iOS app is installed, iOS opens it directly
+        # (this page never loads). Otherwise this page routes to the App Store
+        # (iPhone) or the browser mic (Android / desktop).
+        if p == "/j":
+            try:
+                with open("join.html", "rb") as f:
+                    body = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers(); self.wfile.write(body); return
+            except Exception:
+                return self._json({"error": "join page missing"}, 404)
+
         # ---- mic pairing ----
         if p == "/ping":
             return self._json({"app": "imicobo", "version": 2,

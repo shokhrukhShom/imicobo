@@ -651,7 +651,7 @@ const MIC = (() => {
       await ensureRoom();
       g('pairCode').textContent=myCode;
       g('pairCode').classList.remove('wait');
-      try{ g('pairQR').innerHTML=QR.svg(`imicobo://pair?h=${qrHost}&c=${myCode}`,200); g('pairQR').classList.add('show'); }catch(_){}
+      try{ g('pairQR').innerHTML=QR.svg(`${location.origin}/j?c=${myCode}`,200); g('pairQR').classList.add('show'); }catch(_){}
       renderRoster();
     }catch(e){ g('pairHint').textContent='Relay not reachable — is the server running?'; }
   }
