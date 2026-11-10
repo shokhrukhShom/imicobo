@@ -640,7 +640,8 @@ function startPlayer(id){
   });
 }
 function openOverlay(title){ $("#nowTitle").textContent = title; $("#overlay").classList.add("show"); }
-function closePlayer(){ $("#overlay").classList.remove("show"); try{ player && player.stopVideo && player.stopVideo(); }catch(_){} }
+function closePlayer(){ $("#overlay").classList.remove("show"); try{ player && player.stopVideo && player.stopVideo(); }catch(_){}
+  try{ if(typeof PAY!=='undefined') PAY.enforce(); }catch(_){} }   // free songs used up → mute phones now the song's done
 function openOnYouTube(q, msg){
   if(msg) toast(msg);
   window.open("https://www.youtube.com/results?search_query=" + encodeURIComponent(q + " karaoke"), "_blank", "noopener");
@@ -698,6 +699,7 @@ const MIC = (() => {
   const g = id => document.getElementById(id);
   let myCode=null, poll=null, statsTimer=null, qrHost=location.host;
   const mics = {};   // id -> {pc,name,gain,src,audio,muted,volume,jitter,live}
+  let micLocked = false;   // true = free songs used up → all phones force-muted
 
   /* ---- shared effects chain (ONE for the whole room) ----
      each mic -> own gain -> mixBus -> EQ -> comp -> dry/reverb/echo -> out -> master -> speakers.
@@ -814,6 +816,8 @@ const MIC = (() => {
     poll=setInterval(tick,900); statsTimer=setInterval(updateStats,1000);
   }
   async function pair(){
+    // free songs used up → send them to the upgrade page instead of pairing
+    if(typeof PAY!=='undefined' && PAY.outOfFree && PAY.outOfFree()){ PAY.show(); return; }
     openModal();
     try{
       await ensureRoom();
@@ -881,14 +885,20 @@ const MIC = (() => {
   }
   function applyLevel(m, mode){
     if(mode===undefined) mode = currentMode();
-    const v = m.muted ? 0 : m.volume*2;
-    // Web Audio send: off when clean; carries wet (hybrid) or dry+wet (full)
-    if(m.gain && ctx) m.gain.gain.setTargetAtTime((mode==='clean') ? 0 : v, ctx.currentTime, 0.02);
-    // raw dry via <audio>: audible when clean or hybrid, muted only in full
+    const muted = m.muted || micLocked;         // global lock overrides per-mic
+    const v = muted ? 0 : m.volume*2;
+    // Web Audio send: off when clean/locked; carries wet (hybrid) or dry+wet (full)
+    if(m.gain && ctx) m.gain.gain.setTargetAtTime((mode==='clean' || micLocked) ? 0 : v, ctx.currentTime, 0.02);
+    // raw dry via <audio>: audible when clean or hybrid, muted in full or when locked
     if(m.audio){
       if(mode==='full'){ m.audio.muted = true; }
-      else { m.audio.muted = m.muted; m.audio.volume = Math.min(1, Math.max(0, m.volume*2)); }
+      else { m.audio.muted = muted; m.audio.volume = Math.min(1, Math.max(0, m.volume*2)); }
     }
+  }
+  function setLocked(on){
+    micLocked = !!on;
+    for(const id in mics) applyLevel(mics[id]);
+    try{ renderBar(); }catch(_){}
   }
   function removeMic(id){
     const m=mics[id]; if(!m) return;
@@ -951,7 +961,7 @@ const MIC = (() => {
   function openModal(){ g('pair').classList.add('show'); }
   function closeModal(){ g('pair').classList.remove('show'); }
 
-  return { pair, disconnect, disconnectAll, closeModal };
+  return { pair, disconnect, disconnectAll, closeModal, setLocked };
 })();
 
 /* ============================================================= PAYWALL */
@@ -963,7 +973,7 @@ const PAY = (() => {
   async function refresh(){
     try{ me = await (await fetch("/api/me", {credentials:"same-origin"})).json(); }
     catch(_){ me = { entitled:false, until:0, email:null, free_songs:5 }; }
-    render(); initGoogle(); return me;
+    render(); initGoogle(); enforce(); return me;
   }
 
   /* ---- Google Sign-In (ID-token flow) ---- */
@@ -1080,11 +1090,14 @@ const PAY = (() => {
   function limit(){ return me.free_songs || 5; }
   function remaining(){ return Math.max(0, limit() - freeState().count); }
 
+  function outOfFree(){ return !me.entitled && remaining() <= 0; }
+  function enforce(){ try{ if(typeof MIC!=='undefined' && MIC.setLocked) MIC.setLocked(outOfFree()); }catch(_){} }
+
   // called before every song; true = allowed to play
   async function gate(){
     if(me.entitled) return true;
     const c = freeState();
-    if(c.count >= limit()){ show(); return false; }
+    if(c.count >= limit()){ show(); enforce(); return false; }
     c.count++; saveFree(c); render();
     return true;
   }
@@ -1159,10 +1172,11 @@ const PAY = (() => {
     const r = remaining();
     g("paySub").textContent = r > 0
       ? ("You have " + r + " free song" + (r===1?"":"s") + " left today. Go unlimited — up to 6 mics at once.")
-      : "You've used your 5 free songs for today. Unlock unlimited singing — up to 6 mics at once.";
+      : "You've used your 5 free songs for today 🎤  Come back tomorrow for more free singing — or upgrade now for unlimited.";
     const tn = g("payTest");
     if(tn) tn.style.display = (me.stripe_mode === "test") ? "block" : "none";
     g("paywall").classList.add("show");
+    if(outOfFree()) enforce();          // mute the phones while they're out
   }
   function hide(){ g("paywall").classList.remove("show"); }
 
@@ -1208,7 +1222,7 @@ const PAY = (() => {
   refresh().then(initParams);
   return { gate, show, open, hide, buy, refresh, remaining, signout, account, closeAccount,
            openAuth, hideAuth, authSubmit, authToggle, authForgot,
-           openSetpw, hideSetpw, setPassword };
+           openSetpw, hideSetpw, setPassword, outOfFree, enforce };
 })();
 
 render();
