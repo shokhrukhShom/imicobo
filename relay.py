@@ -464,8 +464,8 @@ class Handler(BaseHTTPRequestHandler):
                     else "off")
             labels = {"day": "Day Pass", "quarter": "3-Month Pass"}
             return self._json({"entitled": ok, "until": until,
-                               "plan": product if ok else None,
-                               "plan_label": labels.get(product or "", "Pass") if ok else None,
+                               "plan": product,
+                               "plan_label": labels.get(product, "Pass") if product else None,
                                "email": email, "free_songs": FREE_SONGS,
                                "has_password": has_password(email),
                                "google_client_id": GOOGLE_CLIENT_ID,

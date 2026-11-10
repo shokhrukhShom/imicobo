@@ -969,11 +969,19 @@ const PAY = (() => {
   const g = id => document.getElementById(id);
   const FREE_KEY = "imb.free";
   let me = { entitled:false, until:0, email:null, free_songs:5 };
+  let expTimer = null;
 
   async function refresh(){
     try{ me = await (await fetch("/api/me", {credentials:"same-origin"})).json(); }
     catch(_){ me = { entitled:false, until:0, email:null, free_songs:5 }; }
-    render(); initGoogle(); enforce(); return me;
+    render(); initGoogle(); enforce();
+    // auto-flip at expiry (no reload needed) for near-term passes like the Day Pass
+    if(expTimer){ clearTimeout(expTimer); expTimer = null; }
+    if(me.entitled && me.until){
+      const ms = (me.until - nowSec())*1000 + 1500;
+      if(ms > 0 && ms < 25*3600*1000) expTimer = setTimeout(refresh, ms);
+    }
+    return me;
   }
 
   /* ---- Google Sign-In (ID-token flow) ---- */
@@ -1090,12 +1098,18 @@ const PAY = (() => {
   function limit(){ return me.free_songs || 5; }
   function remaining(){ return Math.max(0, limit() - freeState().count); }
 
-  function outOfFree(){ return !me.entitled && remaining() <= 0; }
+  function nowSec(){ return Date.now()/1000; }
+  // entitled AND not past expiry — so an expired pass stops counting immediately,
+  // even if the page has been open since before it lapsed.
+  function active(){ return !!me.entitled && (!me.until || me.until > nowSec()); }
+  function outOfFree(){ return !active() && remaining() <= 0; }
   function enforce(){ try{ if(typeof MIC!=='undefined' && MIC.setLocked) MIC.setLocked(outOfFree()); }catch(_){} }
 
   // called before every song; true = allowed to play
   async function gate(){
-    if(me.entitled) return true;
+    // pass lapsed while the page was open → resync with the server first
+    if(me.entitled && me.until && me.until <= nowSec()) await refresh();
+    if(active()) return true;              // valid pass → unlimited
     const c = freeState();
     if(c.count >= limit()){ show(); enforce(); return false; }
     c.count++; saveFree(c); render();
@@ -1120,7 +1134,7 @@ const PAY = (() => {
     }
     // upgrade button — only shown when there's something to buy
     const btn = g("upgradeBtn"); if(!btn) return;
-    if(me.entitled){
+    if(active()){
       btn.style.display = "none";
     } else {
       btn.style.display = "";
@@ -1130,13 +1144,14 @@ const PAY = (() => {
       btn.title = "";
     }
   }
-  function open(){ if(me.entitled) account(); else show(); }
+  function open(){ if(active()) account(); else show(); }
   function account(){
-    g("acctPlan").textContent   = me.entitled ? (me.plan_label || "Pass") : "—";
-    g("acctStatus").textContent = me.entitled ? "Active" : "No active pass";
-    g("acctExpiry").textContent = (me.entitled && me.until) ? fmtFull(me.until) : "—";
+    const on = active();
+    g("acctPlan").textContent   = me.plan_label || "—";
+    g("acctStatus").textContent = on ? "Active" : (me.until ? "Expired" : "No active pass");
+    g("acctExpiry").textContent = me.until ? fmtFull(me.until) : "—";
     g("acctEmail").textContent  = me.email || "—";
-    const buy = g("acctBuy"); if(buy) buy.style.display = me.entitled ? "none" : "block";
+    const buy = g("acctBuy"); if(buy) buy.style.display = on ? "none" : "block";
     const sp = g("acctSetpw"); if(sp) sp.style.display = me.has_password ? "none" : "block";
     g("account").classList.add("show");
   }
@@ -1168,7 +1183,7 @@ const PAY = (() => {
 
   // paywall = passes only
   function show(){
-    if(me.entitled) return;            // nothing to sell
+    if(active()) return;               // nothing to sell
     const r = remaining();
     g("paySub").textContent = r > 0
       ? ("You have " + r + " free song" + (r===1?"":"s") + " left today. Go unlimited — up to 6 mics at once.")
@@ -1222,7 +1237,7 @@ const PAY = (() => {
   refresh().then(initParams);
   return { gate, show, open, hide, buy, refresh, remaining, signout, account, closeAccount,
            openAuth, hideAuth, authSubmit, authToggle, authForgot,
-           openSetpw, hideSetpw, setPassword, outOfFree, enforce };
+           openSetpw, hideSetpw, setPassword, outOfFree, enforce, active };
 })();
 
 render();
