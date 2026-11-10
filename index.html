@@ -202,6 +202,11 @@
   .authmsg.err{color:var(--bad)} .authmsg.ok{color:var(--accent)}
   .authfoot{display:flex;justify-content:space-between;margin:10px 2px 2px;font-size:12.5px}
   .authfoot a{color:var(--accent);text-decoration:none}
+  .pwwrap{position:relative}
+  .pwwrap .authin{padding-right:60px;width:100%}
+  .pweye{position:absolute;right:8px;top:calc(50% - 1px);transform:translateY(-50%);
+    background:none;border:none;color:var(--accent);font:inherit;font-size:12.5px;
+    cursor:pointer;padding:4px 6px}
   .testnote{text-align:center;font-size:12px;color:var(--warn);margin:10px 0 0;
     background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:9px;padding:8px 10px}
   .testnote b{color:var(--ink);font-family:var(--mono)}
@@ -348,7 +353,10 @@
     <div id="gbtn" class="gbtn"></div>
     <div class="ordiv"><span>or with email</span></div>
     <input id="authEmail" class="authin" type="email" placeholder="you@example.com" autocomplete="email">
-    <input id="authPass" class="authin" type="password" placeholder="Password (8+ characters)" autocomplete="current-password">
+    <div class="pwwrap">
+      <input id="authPass" class="authin" type="password" placeholder="Password (8+ characters)" autocomplete="current-password">
+      <button type="button" class="pweye" aria-label="Show password" onclick="togglePw(this)">Show</button>
+    </div>
     <div id="authMsg" class="authmsg" style="display:none"></div>
     <button class="authbtn" id="authGo" onclick="PAY.authSubmit()">Sign in</button>
     <div class="authfoot">
@@ -382,7 +390,10 @@
     <h3>Set a password 🔑</h3>
     <p class="sub">So you can sign in on your other devices with this email:</p>
     <input id="spwEmail" class="authin" type="email" readonly>
-    <input id="spwPass" class="authin" type="password" placeholder="Create a password (8+ characters)" autocomplete="new-password">
+    <div class="pwwrap">
+      <input id="spwPass" class="authin" type="password" placeholder="Create a password (8+ characters)" autocomplete="new-password">
+      <button type="button" class="pweye" aria-label="Show password" onclick="togglePw(this)">Show</button>
+    </div>
     <div id="spwMsg" class="authmsg" style="display:none"></div>
     <button class="authbtn" id="spwGo" onclick="PAY.setPassword()">Save password</button>
     <button class="close" onclick="PAY.hideSetpw()">Skip for now</button>
@@ -670,6 +681,9 @@ function openHelp(){ $("#help").classList.add("show"); }
 function closeHelp(){ $("#help").classList.remove("show"); }
 let toastT;
 function toast(m){ const el=$("#toast"); el.textContent=m; el.classList.add("show"); clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove("show"),3600); }
+function togglePw(btn){ const i=btn.parentElement.querySelector("input"); if(!i) return;
+  const show=i.type==="password"; i.type=show?"text":"password"; btn.textContent=show?"Hide":"Show";
+  btn.setAttribute("aria-label", show?"Hide password":"Show password"); }
 document.addEventListener("keydown", e=>{ if(e.key==="Escape"){ closePlayer(); closeHelp(); MIC.closeModal(); }});
 $("#overlay").addEventListener("click", e=>{ if(e.target.id==="overlay") closePlayer(); });
 $("#help").addEventListener("click", e=>{ if(e.target.id==="help") closeHelp(); });

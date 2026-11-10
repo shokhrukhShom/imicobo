@@ -25,6 +25,10 @@
   .msg{font-size:13.5px;margin:10px 0 0;min-height:18px}
   .msg.err{color:var(--bad)} .msg.ok{color:var(--accent)}
   a{color:var(--accent)}
+  .pwwrap{position:relative}
+  .pwwrap input{padding-right:60px}
+  .pweye{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;
+    color:var(--accent);font:inherit;font-size:12.5px;cursor:pointer;padding:4px 6px}
 </style>
 </head>
 <body>
@@ -32,8 +36,14 @@
   <a class="brand" href="/">iMic<span class="o">o</span>bo</a>
   <h1>Set a new password</h1>
   <p>Choose a new password for your account.</p>
-  <input id="pw"  type="password" placeholder="New password (8+ characters)" autocomplete="new-password">
-  <input id="pw2" type="password" placeholder="Confirm new password" autocomplete="new-password">
+  <div class="pwwrap">
+    <input id="pw"  type="password" placeholder="New password (8+ characters)" autocomplete="new-password">
+    <button type="button" class="pweye" aria-label="Show password" onclick="togglePw(this)">Show</button>
+  </div>
+  <div class="pwwrap">
+    <input id="pw2" type="password" placeholder="Confirm new password" autocomplete="new-password">
+    <button type="button" class="pweye" aria-label="Show password" onclick="togglePw(this)">Show</button>
+  </div>
   <button id="go" onclick="submitReset()">Update password</button>
   <div class="msg" id="msg"></div>
 </div>
@@ -41,6 +51,9 @@
   const token = new URLSearchParams(location.search).get("token") || "";
   const msg = document.getElementById("msg");
   function say(t, cls){ msg.textContent = t; msg.className = "msg " + (cls||""); }
+  function togglePw(btn){ const i=btn.parentElement.querySelector("input"); if(!i) return;
+    const show=i.type==="password"; i.type=show?"text":"password"; btn.textContent=show?"Hide":"Show";
+    btn.setAttribute("aria-label", show?"Hide password":"Show password"); }
   if(!token) say("This reset link is missing its code. Request a new one.", "err");
   async function submitReset(){
     const pw = document.getElementById("pw").value;
