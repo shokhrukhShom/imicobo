@@ -369,9 +369,23 @@
       <div class="arow"><span>Expires</span><b id="acctExpiry">—</b></div>
       <div class="arow"><span>Signed in as</span><b id="acctEmail">—</b></div>
     </div>
+    <button class="authbtn" id="acctSetpw" style="display:none" onclick="PAY.openSetpw()">Set a password</button>
     <button class="authbtn" id="acctBuy" style="display:none" onclick="PAY.closeAccount();PAY.show()">Get a pass</button>
     <button class="close" onclick="PAY.closeAccount()">Done</button>
     <button class="danger" onclick="PAY.signout()">Sign out</button>
+  </div>
+</div>
+
+<!-- set-a-password modal (claim account after Stripe checkout) -->
+<div class="modal" id="setpw">
+  <div class="sheet">
+    <h3>Set a password 🔑</h3>
+    <p class="sub">So you can sign in on your other devices with this email:</p>
+    <input id="spwEmail" class="authin" type="email" readonly>
+    <input id="spwPass" class="authin" type="password" placeholder="Create a password (8+ characters)" autocomplete="new-password">
+    <div id="spwMsg" class="authmsg" style="display:none"></div>
+    <button class="authbtn" id="spwGo" onclick="PAY.setPassword()">Save password</button>
+    <button class="close" onclick="PAY.hideSetpw()">Skip for now</button>
   </div>
 </div>
 
@@ -1096,9 +1110,34 @@ const PAY = (() => {
     g("acctExpiry").textContent = (me.entitled && me.until) ? fmtFull(me.until) : "—";
     g("acctEmail").textContent  = me.email || "—";
     const buy = g("acctBuy"); if(buy) buy.style.display = me.entitled ? "none" : "block";
+    const sp = g("acctSetpw"); if(sp) sp.style.display = me.has_password ? "none" : "block";
     g("account").classList.add("show");
   }
   function closeAccount(){ g("account").classList.remove("show"); }
+
+  // set-a-password (claim account after checkout, or add email login to a Google account)
+  function openSetpw(){
+    if(!me.email) return;
+    closeAccount();
+    g("spwEmail").value = me.email;
+    const pw = g("spwPass"); if(pw) pw.value = "";
+    spwMsg("");
+    g("setpw").classList.add("show");
+  }
+  function hideSetpw(){ g("setpw").classList.remove("show"); }
+  function spwMsg(t, cls){ const m=g("spwMsg"); if(!m) return;
+    m.textContent=t||""; m.className="authmsg"+(cls?" "+cls:""); m.style.display=t?"block":"none"; }
+  async function setPassword(){
+    const pw = g("spwPass").value || "";
+    if(pw.length < 8){ return spwMsg("Password must be at least 8 characters.", "err"); }
+    g("spwGo").disabled = true; spwMsg("Saving…");
+    try{
+      const r = await (await fetch("/api/set-password", { method:"POST", credentials:"same-origin",
+        headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ password: pw }) })).json();
+      if(r.ok){ await refresh(); hideSetpw(); toast("✓ Password set — you can sign in on any device now."); }
+      else { spwMsg(r.error || "Couldn't save password.", "err"); g("spwGo").disabled = false; }
+    }catch(_){ spwMsg("Couldn't reach the server — try again.", "err"); g("spwGo").disabled = false; }
+  }
 
   // paywall = passes only
   function show(){
@@ -1140,7 +1179,11 @@ const PAY = (() => {
 
   function initParams(){
     const p = new URLSearchParams(location.search);
-    if(p.get("welcome")){ toast("🎉 You're in — sing all you want!"); history.replaceState({}, "", "/"); }
+    if(p.get("welcome")){
+      toast("🎉 You're in — sing all you want!");
+      history.replaceState({}, "", "/");
+      if(me.email && !me.has_password) setTimeout(openSetpw, 700);   // offer to claim the account
+    }
     else if(p.get("verified")){ toast("✓ Email confirmed — you're signed in!"); history.replaceState({}, "", "/"); }
     else if(p.get("reset")){ toast("✓ Password updated — you're signed in!"); history.replaceState({}, "", "/"); }
     else if(p.get("verify") === "bad"){ toast("That confirmation link was invalid or expired."); history.replaceState({}, "", "/"); }
@@ -1150,7 +1193,8 @@ const PAY = (() => {
 
   refresh().then(initParams);
   return { gate, show, open, hide, buy, refresh, remaining, signout, account, closeAccount,
-           openAuth, hideAuth, authSubmit, authToggle, authForgot };
+           openAuth, hideAuth, authSubmit, authToggle, authForgot,
+           openSetpw, hideSetpw, setPassword };
 })();
 
 render();

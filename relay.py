@@ -220,6 +220,21 @@ def set_password(email, pw):
     with _db_lock:
         _db.execute("UPDATE users SET pwhash=?, verified=1 WHERE email=?",
                     (hash_pw(pw), email.lower())); _db.commit()
+def upsert_password(email, pw):
+    """Set a password, creating a verified account if none exists yet.
+    Used after Stripe checkout ('claim your account') and by password reset,
+    so a paid-but-passwordless email can become a real login."""
+    with _db_lock:
+        _db.execute("INSERT INTO users(email,pwhash,verified,created_at) VALUES(?,?,1,?) "
+                    "ON CONFLICT(email) DO UPDATE SET pwhash=excluded.pwhash, verified=1",
+                    (email.lower(), hash_pw(pw), time.time())); _db.commit()
+def has_password(email):
+    return bool(email and get_user(email))
+def has_grant(email):
+    if not email: return False
+    with _db_lock:
+        return _db.execute("SELECT 1 FROM grants WHERE email=? LIMIT 1",
+                           (email.lower(),)).fetchone() is not None
 def reset_unverified(email, pw):
     """Re-register an account that never confirmed its email: new password, still unverified."""
     with _db_lock:
@@ -281,10 +296,10 @@ def send_verify_email(email, base_url):
 def send_reset_email(email, base_url):
     tok = make_token(email, "reset", 2*3600)
     link = base_url + "/reset?token=" + urllib.parse.quote(tok)
-    t, h = _email_wrap("Reset your password",
-        "We got a request to reset your iMicobo password. This link works for 2 hours:",
-        "Reset password", link)
-    return send_email(email, "Reset your iMicobo password", t, h)
+    t, h = _email_wrap("Set your password",
+        "Use this link to set (or reset) the password for your iMicobo account. It works for 2 hours:",
+        "Set password", link)
+    return send_email(email, "Set your iMicobo password", t, h)
 
 def grant_access(email, product, checkout_id, seconds):
     now = time.time()
@@ -447,6 +462,7 @@ class Handler(BaseHTTPRequestHandler):
                                "plan": product if ok else None,
                                "plan_label": labels.get(product or "", "Pass") if ok else None,
                                "email": email, "free_songs": FREE_SONGS,
+                               "has_password": has_password(email),
                                "google_client_id": GOOGLE_CLIENT_ID,
                                "stripe_mode": mode})
 
@@ -713,15 +729,29 @@ class Handler(BaseHTTPRequestHandler):
                 send_verify_email(email, self._base_url())
             return self._json({"ok": True, "message": "If that account needs confirming, we sent a new link."})
 
-        # ---- forgot password: email a reset link (no account enumeration) ----
+        # ---- set a password while signed in (claim account after Stripe checkout) ----
+        if p == "/api/set-password":
+            email = self._session_email()
+            if not email:
+                return self._json({"error": "Not signed in."}, 401)
+            try:    body = json.loads(raw) if raw else {}
+            except Exception: body = {}
+            pw = body.get("password") or ""
+            if len(pw) < 8:
+                return self._json({"error": "Password must be at least 8 characters."}, 400)
+            upsert_password(email, pw)
+            return self._json({"ok": True, "message": "Password saved — you can now sign in anywhere."})
+
+        # ---- forgot password: email a reset/claim link (no account enumeration) ----
+        # Works for existing accounts AND paid-but-passwordless emails (Stripe guests).
         if p == "/api/forgot":
             try:    body = json.loads(raw) if raw else {}
             except Exception: body = {}
             email = (body.get("email") or "").strip().lower()
-            if valid_email(email) and get_user(email) and SMTP_PASS:
+            if valid_email(email) and (get_user(email) or has_grant(email)) and SMTP_PASS:
                 send_reset_email(email, self._base_url())
             return self._json({"ok": True,
-                               "message": "If that email has an account, we sent a reset link."})
+                               "message": "If that email has an account or a pass, we sent a link to set your password."})
 
         # ---- reset password with a token from the email link ----
         if p == "/api/reset":
@@ -733,7 +763,7 @@ class Handler(BaseHTTPRequestHandler):
             email = use_token(body.get("token"), "reset")
             if not email:
                 return self._json({"error": "This reset link is invalid or expired."}, 400)
-            set_password(email, pw)       # also marks verified
+            upsert_password(email, pw)     # creates a verified account if none existed
             ok, until, _ = entitlement(email)
             return self._json_cookie(
                 {"ok": True, "entitled": ok, "until": until, "email": email},
