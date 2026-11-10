@@ -236,6 +236,7 @@
   <span class="nav-spacer"></span>
   <button class="link" onclick="openHelp()">❔ How to connect</button>
   <button class="link" onclick="MIC.pair()">📱 Pair iPhone</button>
+  <button class="link" id="authBtn" onclick="PAY.openAuth()">Sign in</button>
   <button class="link" id="upgradeBtn" onclick="PAY.open()">Upgrade</button>
 </nav>
 
@@ -315,24 +316,6 @@
     <h3 id="payTitle">Keep the party going 🎉</h3>
     <p class="sub" id="paySub">You've used your 5 free songs for today. Unlock unlimited singing — up to 6 mics at once.</p>
 
-    <div id="paySignedIn" class="signedin" style="display:none">
-      Signed in as <b id="payEmail">—</b> · <a href="#" onclick="PAY.signout();return false">Sign out</a>
-    </div>
-    <div id="payAccount">
-      <p class="gnote" id="authHead">Have a pass already? Sign in to unlock it on this device:</p>
-      <div id="gbtn" class="gbtn"></div>
-      <div class="ordiv"><span>or with email</span></div>
-      <input id="authEmail" class="authin" type="email" placeholder="you@example.com" autocomplete="email">
-      <input id="authPass" class="authin" type="password" placeholder="Password (8+ characters)" autocomplete="current-password">
-      <div id="authMsg" class="authmsg" style="display:none"></div>
-      <button class="authbtn" id="authGo" onclick="PAY.authSubmit()">Sign in</button>
-      <div class="authfoot">
-        <a href="#" id="authToggle" onclick="PAY.authToggle();return false">New here? Create an account</a>
-        <a href="#" id="authForgot" onclick="PAY.authForgot();return false">Forgot password?</a>
-      </div>
-      <div class="ordiv"><span>or buy a pass below</span></div>
-    </div>
-
     <div class="plans">
       <button class="plan" onclick="PAY.buy('day')">
         <div class="pname">Day Pass</div>
@@ -352,7 +335,27 @@
     <p class="fine">Secure checkout by Stripe. One-time payment — nothing auto-renews.
       <a href="/privacy-policy" target="_blank">Privacy</a></p>
     <p class="testnote" id="payTest" style="display:none">🧪 Test mode — pay with card <b>4242 4242 4242 4242</b>, any future date &amp; any CVC.</p>
+    <p class="gnote" style="margin-top:8px">Already have a pass? <a href="#" onclick="PAY.openAuth();return false">Sign in</a></p>
     <button class="close" onclick="PAY.hide()">Maybe later</button>
+  </div>
+</div>
+
+<!-- sign in / create account modal -->
+<div class="modal" id="auth">
+  <div class="sheet">
+    <h3 id="authTitle">Sign in</h3>
+    <p class="sub" id="authSub">Sign in to unlock your pass on any device.</p>
+    <div id="gbtn" class="gbtn"></div>
+    <div class="ordiv"><span>or with email</span></div>
+    <input id="authEmail" class="authin" type="email" placeholder="you@example.com" autocomplete="email">
+    <input id="authPass" class="authin" type="password" placeholder="Password (8+ characters)" autocomplete="current-password">
+    <div id="authMsg" class="authmsg" style="display:none"></div>
+    <button class="authbtn" id="authGo" onclick="PAY.authSubmit()">Sign in</button>
+    <div class="authfoot">
+      <a href="#" id="authToggle" onclick="PAY.authToggle();return false">New here? Create an account</a>
+      <a href="#" id="authForgot" onclick="PAY.authForgot();return false">Forgot password?</a>
+    </div>
+    <button class="close" onclick="PAY.hideAuth()">Cancel</button>
   </div>
 </div>
 
@@ -366,6 +369,7 @@
       <div class="arow"><span>Expires</span><b id="acctExpiry">—</b></div>
       <div class="arow"><span>Signed in as</span><b id="acctEmail">—</b></div>
     </div>
+    <button class="authbtn" id="acctBuy" style="display:none" onclick="PAY.closeAccount();PAY.show()">Get a pass</button>
     <button class="close" onclick="PAY.closeAccount()">Done</button>
     <button class="danger" onclick="PAY.signout()">Sign out</button>
   </div>
@@ -966,7 +970,7 @@ const PAY = (() => {
   }
   async function signout(){
     try{ await fetch("/api/logout", { method:"POST", credentials:"same-origin" }); }catch(_){}
-    closeAccount(); hide();
+    closeAccount(); hide(); hideAuth();
     await refresh();
     toast("Signed out.");
   }
@@ -975,13 +979,20 @@ const PAY = (() => {
   let authMode = "signin";           // or "signup"
   function authMsg(t, cls){ const m=g("authMsg"); if(!m) return;
     m.textContent=t||""; m.className="authmsg"+(cls?" "+cls:""); m.style.display=t?"block":"none"; }
+  function applyAuthMode(){
+    const signup = authMode==="signup";
+    g("authTitle").textContent = signup ? "Create your account" : "Sign in";
+    g("authSub").textContent   = signup
+      ? "Create an account so your pass works on any device."
+      : "Sign in to unlock your pass on any device.";
+    g("authGo").textContent     = signup ? "Create account" : "Sign in";
+    g("authToggle").textContent = signup ? "Have an account? Sign in" : "New here? Create an account";
+    g("authForgot").style.display = signup ? "none" : "inline";
+    g("authPass").setAttribute("autocomplete", signup ? "new-password" : "current-password");
+  }
   function authToggle(){
     authMode = (authMode==="signin") ? "signup" : "signin";
-    g("authGo").textContent   = authMode==="signup" ? "Create account" : "Sign in";
-    g("authToggle").textContent = authMode==="signup" ? "Have an account? Sign in" : "New here? Create an account";
-    g("authForgot").style.display = authMode==="signup" ? "none" : "inline";
-    g("authPass").setAttribute("autocomplete", authMode==="signup" ? "new-password" : "current-password");
-    authMsg("");
+    applyAuthMode(); authMsg("");
   }
   async function authSubmit(){
     const email = (g("authEmail").value||"").trim();
@@ -998,8 +1009,9 @@ const PAY = (() => {
         authMsg("✓ " + (r.message || "Check your inbox to confirm your email."), "ok");
       } else if(r.ok){
         await refresh();
-        if(me.entitled){ hide(); toast("🎉 Signed in — pass unlocked!"); }
-        else { hide(); toast("Signed in. Grab a pass to go unlimited."); }
+        hideAuth(); hide();
+        if(me.entitled){ toast("🎉 Signed in — pass unlocked!"); }
+        else { toast("Signed in. Grab a pass to go unlimited."); }
       } else if(r.error==="unverified"){
         authMsg((r.message||"Confirm your email first.") + " ", "err");
         offerResend(email);
@@ -1059,52 +1071,59 @@ const PAY = (() => {
     catch(_){ return ""; }
   }
   function render(){
+    // account / sign-in button
+    const a = g("authBtn");
+    if(a){
+      if(me.email){ a.textContent = "👤 Account"; a.classList.add("pro"); a.onclick = account; a.title = me.email; }
+      else { a.textContent = "Sign in"; a.classList.remove("pro"); a.onclick = openAuth; a.title = ""; }
+    }
+    // upgrade button — only shown when there's something to buy
     const btn = g("upgradeBtn"); if(!btn) return;
     if(me.entitled){
-      btn.textContent = me.plan_label || "Pass";
-      btn.classList.add("pro");
-      btn.title = me.until ? ("Active until " + fmtFull(me.until)) : "Active";
-      btn.onclick = account;
+      btn.style.display = "none";
     } else {
+      btn.style.display = "";
       const r = remaining();
       btn.textContent = r > 0 ? ("Upgrade · " + r + " free left") : "Upgrade";
-      btn.classList.remove("pro");
-      btn.title = "";
       btn.onclick = show;
+      btn.title = "";
     }
   }
   function open(){ if(me.entitled) account(); else show(); }
   function account(){
-    g("acctPlan").textContent   = me.plan_label || "—";
-    g("acctStatus").textContent = me.entitled ? "Active" : "Expired";
-    g("acctExpiry").textContent = me.until ? fmtFull(me.until) : "—";
+    g("acctPlan").textContent   = me.entitled ? (me.plan_label || "Pass") : "—";
+    g("acctStatus").textContent = me.entitled ? "Active" : "No active pass";
+    g("acctExpiry").textContent = (me.entitled && me.until) ? fmtFull(me.until) : "—";
     g("acctEmail").textContent  = me.email || "—";
+    const buy = g("acctBuy"); if(buy) buy.style.display = me.entitled ? "none" : "block";
     g("account").classList.add("show");
   }
   function closeAccount(){ g("account").classList.remove("show"); }
 
+  // paywall = passes only
   function show(){
     if(me.entitled) return;            // nothing to sell
     const r = remaining();
     g("paySub").textContent = r > 0
       ? ("You have " + r + " free song" + (r===1?"":"s") + " left today. Go unlimited — up to 6 mics at once.")
       : "You've used your 5 free songs for today. Unlock unlimited singing — up to 6 mics at once.";
-    // signed-in users see their account; others see the Google button
-    const inEl = g("paySignedIn"), acEl = g("payAccount");
-    if(me.email){
-      g("payEmail").textContent = me.email;
-      if(inEl) inEl.style.display = "block";
-      if(acEl) acEl.style.display = "none";
-    } else {
-      if(inEl) inEl.style.display = "none";
-      if(acEl) acEl.style.display = "block";
-      initGoogle();
-    }
     const tn = g("payTest");
     if(tn) tn.style.display = (me.stripe_mode === "test") ? "block" : "none";
     g("paywall").classList.add("show");
   }
   function hide(){ g("paywall").classList.remove("show"); }
+
+  // auth = sign in / create account
+  function openAuth(){
+    if(me.email){ account(); return; }     // already signed in → show account instead
+    hide();                                 // close paywall if it was open
+    authMode = "signin"; applyAuthMode(); authMsg("");
+    const em = g("authEmail"), pw = g("authPass");
+    if(em) em.value = ""; if(pw) pw.value = "";
+    g("auth").classList.add("show");
+    initGoogle();
+  }
+  function hideAuth(){ g("auth").classList.remove("show"); }
 
   async function buy(plan){
     const consent = !!(g("consentChk") && g("consentChk").checked);
@@ -1131,7 +1150,7 @@ const PAY = (() => {
 
   refresh().then(initParams);
   return { gate, show, open, hide, buy, refresh, remaining, signout, account, closeAccount,
-           authSubmit, authToggle, authForgot };
+           openAuth, hideAuth, authSubmit, authToggle, authForgot };
 })();
 
 render();
