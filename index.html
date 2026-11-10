@@ -193,6 +193,15 @@
   .fine a{color:var(--accent)}
   .gbtn{display:flex;justify-content:center;min-height:40px;margin:4px 0 2px}
   .gnote{text-align:center;font-size:12.5px;color:var(--dim);margin:2px 0 8px}
+  .authin{width:100%;background:#0d1017;border:1px solid var(--line);color:var(--ink);
+    font:inherit;padding:11px 13px;border-radius:10px;margin:5px 0}
+  .authbtn{width:100%;background:var(--accent);color:#06231f;font:inherit;font-weight:700;
+    border:none;border-radius:10px;padding:12px;margin-top:8px;cursor:pointer}
+  .authbtn:disabled{opacity:.6;cursor:default}
+  .authmsg{font-size:12.5px;margin:6px 2px 0;color:var(--warn)}
+  .authmsg.err{color:var(--bad)} .authmsg.ok{color:var(--accent)}
+  .authfoot{display:flex;justify-content:space-between;margin:10px 2px 2px;font-size:12.5px}
+  .authfoot a{color:var(--accent);text-decoration:none}
   .testnote{text-align:center;font-size:12px;color:var(--warn);margin:10px 0 0;
     background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:9px;padding:8px 10px}
   .testnote b{color:var(--ink);font-family:var(--mono)}
@@ -310,8 +319,17 @@
       Signed in as <b id="payEmail">—</b> · <a href="#" onclick="PAY.signout();return false">Sign out</a>
     </div>
     <div id="payAccount">
-      <p class="gnote">Already bought a pass? Sign in to unlock it on this device:</p>
+      <p class="gnote" id="authHead">Have a pass already? Sign in to unlock it on this device:</p>
       <div id="gbtn" class="gbtn"></div>
+      <div class="ordiv"><span>or with email</span></div>
+      <input id="authEmail" class="authin" type="email" placeholder="you@example.com" autocomplete="email">
+      <input id="authPass" class="authin" type="password" placeholder="Password (8+ characters)" autocomplete="current-password">
+      <div id="authMsg" class="authmsg" style="display:none"></div>
+      <button class="authbtn" id="authGo" onclick="PAY.authSubmit()">Sign in</button>
+      <div class="authfoot">
+        <a href="#" id="authToggle" onclick="PAY.authToggle();return false">New here? Create an account</a>
+        <a href="#" id="authForgot" onclick="PAY.authForgot();return false">Forgot password?</a>
+      </div>
       <div class="ordiv"><span>or buy a pass below</span></div>
     </div>
 
@@ -952,6 +970,65 @@ const PAY = (() => {
     await refresh();
     toast("Signed out.");
   }
+
+  /* ---- email + password ---- */
+  let authMode = "signin";           // or "signup"
+  function authMsg(t, cls){ const m=g("authMsg"); if(!m) return;
+    m.textContent=t||""; m.className="authmsg"+(cls?" "+cls:""); m.style.display=t?"block":"none"; }
+  function authToggle(){
+    authMode = (authMode==="signin") ? "signup" : "signin";
+    g("authGo").textContent   = authMode==="signup" ? "Create account" : "Sign in";
+    g("authToggle").textContent = authMode==="signup" ? "Have an account? Sign in" : "New here? Create an account";
+    g("authForgot").style.display = authMode==="signup" ? "none" : "inline";
+    g("authPass").setAttribute("autocomplete", authMode==="signup" ? "new-password" : "current-password");
+    authMsg("");
+  }
+  async function authSubmit(){
+    const email = (g("authEmail").value||"").trim();
+    const pw = g("authPass").value||"";
+    if(!email || !pw){ return authMsg("Enter your email and password.", "err"); }
+    const consent = !!(g("consentChk") && g("consentChk").checked);
+    g("authGo").disabled = true; authMsg("Working…");
+    try{
+      const url = authMode==="signup" ? "/api/signup" : "/api/login";
+      const r = await (await fetch(url, { method:"POST", credentials:"same-origin",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ email, password: pw, consent }) })).json();
+      if(r.ok && r.needs_verify){
+        authMsg("✓ " + (r.message || "Check your inbox to confirm your email."), "ok");
+      } else if(r.ok){
+        await refresh();
+        if(me.entitled){ hide(); toast("🎉 Signed in — pass unlocked!"); }
+        else { hide(); toast("Signed in. Grab a pass to go unlimited."); }
+      } else if(r.error==="unverified"){
+        authMsg((r.message||"Confirm your email first.") + " ", "err");
+        offerResend(email);
+      } else {
+        authMsg(r.error || "That didn't work.", "err");
+      }
+    }catch(_){ authMsg("Couldn't reach the server — try again.", "err"); }
+    g("authGo").disabled = false;
+  }
+  function offerResend(email){
+    const m=g("authMsg"); if(!m) return;
+    const a=document.createElement("a"); a.href="#"; a.textContent="Resend link";
+    a.style.color="var(--accent)";
+    a.onclick=async(e)=>{ e.preventDefault();
+      try{ await fetch("/api/resend",{method:"POST",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},body:JSON.stringify({email})}); }catch(_){}
+      authMsg("New confirmation link sent.", "ok"); };
+    m.appendChild(a);
+  }
+  async function authForgot(){
+    const email = (g("authEmail").value||"").trim();
+    if(!email){ return authMsg("Type your email above first, then tap Forgot password.", "err"); }
+    authMsg("Working…");
+    try{
+      const r = await (await fetch("/api/forgot", { method:"POST", credentials:"same-origin",
+        headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ email }) })).json();
+      authMsg(r.message || "If that email has an account, we sent a reset link.", "ok");
+    }catch(_){ authMsg("Couldn't reach the server — try again.", "err"); }
+  }
   // local-midnight reset, stored per browser
   function freeState(){
     const today = new Date().toLocaleDateString("en-CA");   // YYYY-MM-DD local
@@ -1045,12 +1122,16 @@ const PAY = (() => {
   function initParams(){
     const p = new URLSearchParams(location.search);
     if(p.get("welcome")){ toast("🎉 You're in — sing all you want!"); history.replaceState({}, "", "/"); }
+    else if(p.get("verified")){ toast("✓ Email confirmed — you're signed in!"); history.replaceState({}, "", "/"); }
+    else if(p.get("reset")){ toast("✓ Password updated — you're signed in!"); history.replaceState({}, "", "/"); }
+    else if(p.get("verify") === "bad"){ toast("That confirmation link was invalid or expired."); history.replaceState({}, "", "/"); }
     else if(p.get("checkout") === "cancel"){ history.replaceState({}, "", "/"); }
     else if(p.get("checkout")){ toast("Checkout didn't complete."); history.replaceState({}, "", "/"); }
   }
 
   refresh().then(initParams);
-  return { gate, show, open, hide, buy, refresh, remaining, signout, account, closeAccount };
+  return { gate, show, open, hide, buy, refresh, remaining, signout, account, closeAccount,
+           authSubmit, authToggle, authForgot };
 })();
 
 render();

@@ -127,7 +127,35 @@ should return `{"url": "https://...mzstatic.com/..."}`.
 
 ---
 
-## 7. Turn on Google sign-in
+## 7. Turn on email sign-in (SMTP)
+
+Lets people without Google create an account with **email + password**, and powers
+**email verification** and **password reset**. Uses the mailbox you set up at your
+host (e.g. Hostinger `support@imicobo.com`).
+
+Add to `/opt/imicobo/.env`:
+
+```
+SMTP_HOST=smtp.hostinger.com
+SMTP_PORT=465
+SMTP_USER=support@imicobo.com
+SMTP_PASS=your-mailbox-password        # the password you set for that mailbox
+```
+
+Then `systemctl restart imicobo`. On startup the log shows whether email is on.
+Security notes:
+- Passwords are stored only as salted **PBKDF2-SHA256** hashes — never plaintext.
+- New email accounts must **confirm via an emailed link** before they can sign in
+  (this proves they own the address, so no one can claim a pass bought under it).
+- If `SMTP_PASS` is blank, email sign-up is disabled and the app says so — Google
+  sign-in still works.
+
+> Keep `SMTP_PASS` only in `.env`, never in git or chat. If the mailbox password
+> leaks, change it at your host and update `.env`.
+
+---
+
+## 8. Turn on Google sign-in
 
 Sign-in lets a paying customer restore their pass on any device by signing in
 with the same Google email. It uses Google's ID-token flow, so **no client
@@ -154,7 +182,7 @@ in `.env` only if you make a new one. Nothing else to deploy — the button and 
 
 ---
 
-## 8. Turn on payments (Stripe)
+## 9. Turn on payments (Stripe)
 
 The paywall is free-tier until you add Stripe keys — until then `/api/checkout`
 politely returns "Payments aren't set up yet" and everyone gets the 5 free songs

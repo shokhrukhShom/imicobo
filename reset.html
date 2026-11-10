@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reset password · iMicobo</title>
+<meta name="theme-color" content="#0a0c10">
+<style>
+  :root{--bg:#0a0c10;--panel:#141922;--line:#2a3340;--ink:#e8eef5;--dim:#8593a5;--accent:#5eead4;--bad:#f87171}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    display:grid;place-items:center;padding:24px}
+  .card{width:min(400px,100%);background:var(--panel);border:1px solid var(--line);
+    border-radius:16px;padding:28px}
+  .brand{font-weight:700;font-size:20px;text-decoration:none;color:var(--ink)}
+  .brand .o{color:var(--accent)}
+  h1{font-size:22px;margin:16px 0 4px}
+  p{color:var(--dim);font-size:14px;margin:0 0 18px}
+  input{width:100%;background:#0d1017;border:1px solid var(--line);color:var(--ink);
+    font:inherit;padding:12px 14px;border-radius:10px;margin:6px 0}
+  button{width:100%;background:var(--accent);color:#06231f;font:inherit;font-weight:700;
+    border:none;border-radius:10px;padding:13px;margin-top:10px;cursor:pointer}
+  button:disabled{opacity:.6;cursor:default}
+  .msg{font-size:13.5px;margin:10px 0 0;min-height:18px}
+  .msg.err{color:var(--bad)} .msg.ok{color:var(--accent)}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="card">
+  <a class="brand" href="/">iMic<span class="o">o</span>bo</a>
+  <h1>Set a new password</h1>
+  <p>Choose a new password for your account.</p>
+  <input id="pw"  type="password" placeholder="New password (8+ characters)" autocomplete="new-password">
+  <input id="pw2" type="password" placeholder="Confirm new password" autocomplete="new-password">
+  <button id="go" onclick="submitReset()">Update password</button>
+  <div class="msg" id="msg"></div>
+</div>
+<script>
+  const token = new URLSearchParams(location.search).get("token") || "";
+  const msg = document.getElementById("msg");
+  function say(t, cls){ msg.textContent = t; msg.className = "msg " + (cls||""); }
+  if(!token) say("This reset link is missing its code. Request a new one.", "err");
+  async function submitReset(){
+    const pw = document.getElementById("pw").value;
+    const pw2 = document.getElementById("pw2").value;
+    if(pw.length < 8) return say("Password must be at least 8 characters.", "err");
+    if(pw !== pw2)    return say("Those passwords don't match.", "err");
+    document.getElementById("go").disabled = true;
+    try{
+      const r = await (await fetch("/api/reset", {
+        method:"POST", credentials:"same-origin",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ token, password: pw })
+      })).json();
+      if(r.ok){ say("Password updated — signing you in…", "ok"); setTimeout(()=>location.href="/?reset=1", 900); }
+      else { say(r.error || "Couldn't reset password.", "err"); document.getElementById("go").disabled = false; }
+    }catch(_){ say("Couldn't reach the server — try again.", "err"); document.getElementById("go").disabled = false; }
+  }
+</script>
+</body>
+</html>

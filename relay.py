@@ -21,7 +21,8 @@ No key? The server still runs — /search and /resolve just report `nokey`,
 and the frontend falls back to opening YouTube directly. Nothing breaks.
 """
 import json, os, random, socket, threading, time, urllib.parse, urllib.request
-import sqlite3, hmac, hashlib, base64
+import sqlite3, hmac, hashlib, base64, re, smtplib, ssl
+from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -165,14 +166,125 @@ PLAN_SECONDS  = {"day": 24*3600, "quarter": 90*24*3600}
 FREE_SONGS    = int(os.environ.get("FREE_SONGS", "5"))   # advertised to the frontend
 DB_FILE       = os.environ.get("DB_FILE", "imicobo.db")
 
+# Email (SMTP) — for sign-up verification + password reset. Password goes in .env.
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.hostinger.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
+SMTP_USER = os.environ.get("SMTP_USER", "support@imicobo.com")
+SMTP_PASS = os.environ.get("SMTP_PASS", "").strip()
+SMTP_FROM = os.environ.get("SMTP_FROM", "iMicobo <%s>" % SMTP_USER)
+
 _db = sqlite3.connect(DB_FILE, check_same_thread=False)
 _db.execute("""CREATE TABLE IF NOT EXISTS grants(
     checkout_id TEXT PRIMARY KEY, email TEXT NOT NULL, product TEXT,
     expires_at REAL NOT NULL, created_at REAL NOT NULL)""")
 _db.execute("""CREATE TABLE IF NOT EXISTS consents(
     email TEXT PRIMARY KEY, opted_in INTEGER, updated_at REAL)""")
+_db.execute("""CREATE TABLE IF NOT EXISTS users(
+    email TEXT PRIMARY KEY, pwhash TEXT NOT NULL, verified INTEGER DEFAULT 0,
+    created_at REAL NOT NULL)""")
+_db.execute("""CREATE TABLE IF NOT EXISTS tokens(
+    token TEXT PRIMARY KEY, email TEXT NOT NULL, kind TEXT NOT NULL, expires_at REAL NOT NULL)""")
 _db.commit()
 _db_lock = threading.Lock()
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+def valid_email(e):  return bool(e and EMAIL_RE.match(e) and len(e) <= 254)
+
+# ---- password hashing (stdlib PBKDF2; no bcrypt dependency) ----
+def hash_pw(pw):
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, 200_000)
+    return "pbkdf2$200000$" + _b64(salt) + "$" + _b64(dk)
+def verify_pw(pw, stored):
+    try:
+        algo, iters, salt_b, dk_b = stored.split("$")
+        test = hashlib.pbkdf2_hmac("sha256", pw.encode(), _unb64(salt_b), int(iters))
+        return hmac.compare_digest(test, _unb64(dk_b))
+    except Exception:
+        return False
+
+# ---- user records ----
+def get_user(email):
+    with _db_lock:
+        return _db.execute("SELECT email,pwhash,verified FROM users WHERE email=?",
+                           (email.lower(),)).fetchone()
+def create_user(email, pw):
+    with _db_lock:
+        _db.execute("INSERT INTO users(email,pwhash,verified,created_at) VALUES(?,?,0,?)",
+                    (email.lower(), hash_pw(pw), time.time()))
+        _db.commit()
+def set_verified(email):
+    with _db_lock:
+        _db.execute("UPDATE users SET verified=1 WHERE email=?", (email.lower(),)); _db.commit()
+def set_password(email, pw):
+    with _db_lock:
+        _db.execute("UPDATE users SET pwhash=?, verified=1 WHERE email=?",
+                    (hash_pw(pw), email.lower())); _db.commit()
+def reset_unverified(email, pw):
+    """Re-register an account that never confirmed its email: new password, still unverified."""
+    with _db_lock:
+        _db.execute("UPDATE users SET pwhash=?, verified=0 WHERE email=?",
+                    (hash_pw(pw), email.lower())); _db.commit()
+
+# ---- one-time email tokens (verify / reset) ----
+def make_token(email, kind, ttl):
+    tok = _b64(os.urandom(24))
+    with _db_lock:
+        _db.execute("DELETE FROM tokens WHERE expires_at < ?", (time.time(),))
+        _db.execute("INSERT INTO tokens(token,email,kind,expires_at) VALUES(?,?,?,?)",
+                    (tok, email.lower(), kind, time.time() + ttl)); _db.commit()
+    return tok
+def use_token(tok, kind):
+    if not tok: return None
+    with _db_lock:
+        row = _db.execute("SELECT email,expires_at FROM tokens WHERE token=? AND kind=?",
+                          (tok, kind)).fetchone()
+        if row:
+            _db.execute("DELETE FROM tokens WHERE token=?", (tok,)); _db.commit()
+    if not row or row[1] < time.time(): return None
+    return row[0]
+
+# ---- send mail over SMTP (SSL). Returns True on success. ----
+def send_email(to, subject, text, html=None):
+    if not SMTP_PASS:
+        print("  [email] SMTP_PASS not set — cannot send to", to); return False
+    try:
+        msg = EmailMessage()
+        msg["From"] = SMTP_FROM; msg["To"] = to; msg["Subject"] = subject
+        msg.set_content(text)
+        if html: msg.add_alternative(html, subtype="html")
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx, timeout=15) as s:
+            s.login(SMTP_USER, SMTP_PASS); s.send_message(msg)
+        return True
+    except Exception as e:
+        print("  [email] send failed:", e); return False
+
+def _email_wrap(title, intro, button_label, link):
+    text = f"{intro}\n\n{link}\n\nIf you didn't request this, you can ignore this email.\n— iMicobo"
+    html = (f"<div style='font-family:sans-serif;max-width:460px;margin:auto'>"
+            f"<h2 style='color:#0a0c10'>{title}</h2><p>{intro}</p>"
+            f"<p><a href='{link}' style='display:inline-block;background:#5eead4;color:#06231f;"
+            f"text-decoration:none;font-weight:700;padding:12px 22px;border-radius:10px'>{button_label}</a></p>"
+            f"<p style='color:#8593a5;font-size:13px'>Or paste this link:<br>{link}</p>"
+            f"<p style='color:#8593a5;font-size:12px'>If you didn't request this, ignore this email.</p></div>")
+    return text, html
+
+def send_verify_email(email, base_url):
+    tok = make_token(email, "verify", 48*3600)
+    link = base_url + "/verify?token=" + urllib.parse.quote(tok)
+    t, h = _email_wrap("Confirm your email",
+        "Welcome to iMicobo! Confirm your email to finish setting up your account:",
+        "Confirm email", link)
+    return send_email(email, "Confirm your iMicobo email", t, h)
+
+def send_reset_email(email, base_url):
+    tok = make_token(email, "reset", 2*3600)
+    link = base_url + "/reset?token=" + urllib.parse.quote(tok)
+    t, h = _email_wrap("Reset your password",
+        "We got a request to reset your iMicobo password. This link works for 2 hours:",
+        "Reset password", link)
+    return send_email(email, "Reset your iMicobo password", t, h)
 
 def grant_access(email, product, checkout_id, seconds):
     now = time.time()
@@ -358,6 +470,26 @@ class Handler(BaseHTTPRequestHandler):
                                           self._session_set_cookie(email))
             return self._redirect(self._base_url() + "/?checkout=incomplete")
 
+        # Email verification link → confirm, sign in, bounce home.
+        if p == "/verify":
+            email = use_token(self._q(u, "token"), "verify")
+            if not email:
+                return self._redirect(self._base_url() + "/?verify=bad")
+            set_verified(email)
+            return self._redirect(self._base_url() + "/?verified=1",
+                                  self._session_set_cookie(email))
+
+        # Password-reset link → serve the small reset form (posts to /api/reset).
+        if p == "/reset":
+            try:
+                with open("reset.html", "rb") as f:
+                    body = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers(); self.wfile.write(body); return
+            except Exception:
+                return self._json({"error": "reset page missing"}, 404)
+
         # ---- karaoke: resolve one song title -> one playable video id ----
         if p == "/resolve":
             q = self._q(u, "q").strip()
@@ -529,6 +661,83 @@ class Handler(BaseHTTPRequestHandler):
             return self._json_cookie(
                 {"ok": True},
                 "imb_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
+
+        # ---- email + password: create an account (sends a verify link) ----
+        if p == "/api/signup":
+            try:    body = json.loads(raw) if raw else {}
+            except Exception: body = {}
+            email = (body.get("email") or "").strip().lower()
+            pw    = body.get("password") or ""
+            if not valid_email(email):
+                return self._json({"error": "Enter a valid email address."}, 400)
+            if len(pw) < 8:
+                return self._json({"error": "Password must be at least 8 characters."}, 400)
+            if not SMTP_PASS:
+                return self._json({"error": "Email sign-up isn't set up yet — try Google sign-in."}, 503)
+            existing = get_user(email)
+            if existing and existing[2]:          # already verified
+                return self._json({"error": "That email already has an account — try signing in."}, 409)
+            if not existing:
+                create_user(email, pw)
+            else:
+                reset_unverified(email, pw)   # unconfirmed account: update pw, stay unverified
+            if body.get("consent"): set_consent(email, True)
+            send_verify_email(email, self._base_url())
+            return self._json({"ok": True, "needs_verify": True,
+                               "message": "Check your inbox to confirm your email, then sign in."})
+
+        # ---- email + password: sign in ----
+        if p == "/api/login":
+            try:    body = json.loads(raw) if raw else {}
+            except Exception: body = {}
+            email = (body.get("email") or "").strip().lower()
+            pw    = body.get("password") or ""
+            u = get_user(email)
+            if not u or not verify_pw(pw, u[1]):
+                return self._json({"error": "Wrong email or password."}, 401)
+            if not u[2]:
+                return self._json({"error": "unverified",
+                                   "message": "Please confirm your email first — check your inbox."}, 403)
+            ok, until, _ = entitlement(email)
+            return self._json_cookie(
+                {"ok": True, "entitled": ok, "until": until, "email": email},
+                self._session_set_cookie(email))
+
+        # ---- resend the verification email ----
+        if p == "/api/resend":
+            try:    body = json.loads(raw) if raw else {}
+            except Exception: body = {}
+            email = (body.get("email") or "").strip().lower()
+            u = get_user(email)
+            if u and not u[2] and SMTP_PASS:
+                send_verify_email(email, self._base_url())
+            return self._json({"ok": True, "message": "If that account needs confirming, we sent a new link."})
+
+        # ---- forgot password: email a reset link (no account enumeration) ----
+        if p == "/api/forgot":
+            try:    body = json.loads(raw) if raw else {}
+            except Exception: body = {}
+            email = (body.get("email") or "").strip().lower()
+            if valid_email(email) and get_user(email) and SMTP_PASS:
+                send_reset_email(email, self._base_url())
+            return self._json({"ok": True,
+                               "message": "If that email has an account, we sent a reset link."})
+
+        # ---- reset password with a token from the email link ----
+        if p == "/api/reset":
+            try:    body = json.loads(raw) if raw else {}
+            except Exception: body = {}
+            pw = body.get("password") or ""
+            if len(pw) < 8:
+                return self._json({"error": "Password must be at least 8 characters."}, 400)
+            email = use_token(body.get("token"), "reset")
+            if not email:
+                return self._json({"error": "This reset link is invalid or expired."}, 400)
+            set_password(email, pw)       # also marks verified
+            ok, until, _ = entitlement(email)
+            return self._json_cookie(
+                {"ok": True, "entitled": ok, "until": until, "email": email},
+                self._session_set_cookie(email))
 
         # ---- paywall: create a Stripe Checkout session ----
         if p == "/api/checkout":
