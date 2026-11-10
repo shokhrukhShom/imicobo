@@ -182,11 +182,14 @@ def grant_access(email, product, checkout_id, seconds):
         _db.commit()
 
 def entitlement(email):
-    if not email: return (False, 0)
+    """Returns (active, expires_at, product) for the account's best grant."""
+    if not email: return (False, 0, None)
     with _db_lock:
-        row = _db.execute("SELECT MAX(expires_at) FROM grants WHERE email=?", (email.lower(),)).fetchone()
-    until = row[0] if row and row[0] else 0
-    return (until > time.time(), until)
+        row = _db.execute("SELECT product, expires_at FROM grants WHERE email=? "
+                          "ORDER BY expires_at DESC LIMIT 1", (email.lower(),)).fetchone()
+    if not row or not row[1]:
+        return (False, 0, None)
+    return (row[1] > time.time(), row[1], row[0])
 
 def set_consent(email, opted_in):
     with _db_lock:
@@ -323,11 +326,14 @@ class Handler(BaseHTTPRequestHandler):
         # ---- accounts / paywall ----
         if p == "/api/me":
             email = self._session_email()
-            ok, until = entitlement(email)
+            ok, until, product = entitlement(email)
             mode = ("live" if STRIPE_SECRET_KEY.startswith("sk_live")
                     else "test" if STRIPE_SECRET_KEY.startswith("sk_test")
                     else "off")
+            labels = {"day": "Day Pass", "quarter": "3-Month Pass"}
             return self._json({"entitled": ok, "until": until,
+                               "plan": product if ok else None,
+                               "plan_label": labels.get(product or "", "Pass") if ok else None,
                                "email": email, "free_songs": FREE_SONGS,
                                "google_client_id": GOOGLE_CLIENT_ID,
                                "stripe_mode": mode})
@@ -513,7 +519,7 @@ class Handler(BaseHTTPRequestHandler):
             email = verify_google_token(body.get("credential"))
             if not email:
                 return self._json({"error": "Sign-in failed."}, 401)
-            ok, until = entitlement(email)
+            ok, until, _ = entitlement(email)
             return self._json_cookie(
                 {"ok": True, "entitled": ok, "until": until, "email": email},
                 self._session_set_cookie(email))

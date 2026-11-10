@@ -196,6 +196,10 @@
   .testnote{text-align:center;font-size:12px;color:var(--warn);margin:10px 0 0;
     background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:9px;padding:8px 10px}
   .testnote b{color:var(--ink);font-family:var(--mono)}
+  .acct{margin:8px 0 4px}
+  .arow{display:flex;justify-content:space-between;gap:16px;padding:11px 2px;border-bottom:1px solid var(--line);font-size:14px}
+  .arow span{color:var(--dim)}
+  .arow b{color:var(--ink);text-align:right}
   .signedin{text-align:center;font-size:13px;color:var(--dim);margin:2px 0 6px}
   .signedin b{color:var(--ink)}
   .signedin a{color:var(--accent)}
@@ -223,7 +227,7 @@
   <span class="nav-spacer"></span>
   <button class="link" onclick="openHelp()">❔ How to connect</button>
   <button class="link" onclick="MIC.pair()">📱 Pair iPhone</button>
-  <button class="link" id="upgradeBtn" onclick="PAY.show()">Upgrade</button>
+  <button class="link" id="upgradeBtn" onclick="PAY.open()">Upgrade</button>
 </nav>
 
 <header class="hero">
@@ -306,9 +310,9 @@
       Signed in as <b id="payEmail">—</b> · <a href="#" onclick="PAY.signout();return false">Sign out</a>
     </div>
     <div id="payAccount">
-      <p class="gnote">Sign in first so your pass works on every device:</p>
+      <p class="gnote">Already bought a pass? Sign in to unlock it on this device:</p>
       <div id="gbtn" class="gbtn"></div>
-      <div class="ordiv"><span>already paid? sign in — or grab a pass</span></div>
+      <div class="ordiv"><span>or buy a pass below</span></div>
     </div>
 
     <div class="plans">
@@ -324,12 +328,28 @@
         <div class="pdesc">Unlimited for 90 days</div>
       </button>
     </div>
+    <p class="gnote" style="margin:6px 2px 2px">Tap a pass to check out securely with your card.</p>
     <label class="consent"><input type="checkbox" id="consentChk">
       Email me occasional holiday &amp; birthday karaoke deals. Unsubscribe anytime.</label>
     <p class="fine">Secure checkout by Stripe. One-time payment — nothing auto-renews.
       <a href="/privacy-policy" target="_blank">Privacy</a></p>
     <p class="testnote" id="payTest" style="display:none">🧪 Test mode — pay with card <b>4242 4242 4242 4242</b>, any future date &amp; any CVC.</p>
     <button class="close" onclick="PAY.hide()">Maybe later</button>
+  </div>
+</div>
+
+<!-- account modal (shown when signed in / entitled) -->
+<div class="modal" id="account">
+  <div class="sheet">
+    <h3>Your pass</h3>
+    <div class="acct">
+      <div class="arow"><span>Plan</span><b id="acctPlan">—</b></div>
+      <div class="arow"><span>Status</span><b id="acctStatus">—</b></div>
+      <div class="arow"><span>Expires</span><b id="acctExpiry">—</b></div>
+      <div class="arow"><span>Signed in as</span><b id="acctEmail">—</b></div>
+    </div>
+    <button class="close" onclick="PAY.closeAccount()">Done</button>
+    <button class="danger" onclick="PAY.signout()">Sign out</button>
   </div>
 </div>
 
@@ -928,6 +948,7 @@ const PAY = (() => {
   }
   async function signout(){
     try{ await fetch("/api/logout", { method:"POST", credentials:"same-origin" }); }catch(_){}
+    closeAccount(); hide();
     await refresh();
     toast("Signed out.");
   }
@@ -955,19 +976,35 @@ const PAY = (() => {
     try{ return new Date(ts*1000).toLocaleDateString(undefined,{month:"short",day:"numeric"}); }
     catch(_){ return ""; }
   }
+  function fmtFull(ts){
+    try{ return new Date(ts*1000).toLocaleString(undefined,
+      {month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}); }
+    catch(_){ return ""; }
+  }
   function render(){
     const btn = g("upgradeBtn"); if(!btn) return;
     if(me.entitled){
-      btn.textContent = "✓ Unlimited";
+      btn.textContent = me.plan_label || "Pass";
       btn.classList.add("pro");
-      btn.title = me.until ? ("Pro until " + fmtUntil(me.until)) : "Unlimited";
+      btn.title = me.until ? ("Active until " + fmtFull(me.until)) : "Active";
+      btn.onclick = account;
     } else {
       const r = remaining();
       btn.textContent = r > 0 ? ("Upgrade · " + r + " free left") : "Upgrade";
       btn.classList.remove("pro");
       btn.title = "";
+      btn.onclick = show;
     }
   }
+  function open(){ if(me.entitled) account(); else show(); }
+  function account(){
+    g("acctPlan").textContent   = me.plan_label || "—";
+    g("acctStatus").textContent = me.entitled ? "Active" : "Expired";
+    g("acctExpiry").textContent = me.until ? fmtFull(me.until) : "—";
+    g("acctEmail").textContent  = me.email || "—";
+    g("account").classList.add("show");
+  }
+  function closeAccount(){ g("account").classList.remove("show"); }
 
   function show(){
     if(me.entitled) return;            // nothing to sell
@@ -1013,7 +1050,7 @@ const PAY = (() => {
   }
 
   refresh().then(initParams);
-  return { gate, show, hide, buy, refresh, remaining, signout };
+  return { gate, show, open, hide, buy, refresh, remaining, signout, account, closeAccount };
 })();
 
 render();
