@@ -168,7 +168,7 @@ DB_FILE       = os.environ.get("DB_FILE", "imicobo.db")
 
 # Email (SMTP) — for sign-up verification + password reset. Password goes in .env.
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.hostinger.com")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))   # 587 STARTTLS (465 is often blocked on VPS hosts)
 SMTP_USER = os.environ.get("SMTP_USER", "support@imicobo.com")
 SMTP_PASS = os.environ.get("SMTP_PASS", "").strip()
 SMTP_FROM = os.environ.get("SMTP_FROM", "iMicobo <%s>" % SMTP_USER)
@@ -269,8 +269,13 @@ def send_email(to, subject, text, html=None):
         msg.set_content(text)
         if html: msg.add_alternative(html, subtype="html")
         ctx = ssl.create_default_context()
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx, timeout=15) as s:
-            s.login(SMTP_USER, SMTP_PASS); s.send_message(msg)
+        if SMTP_PORT == 465:                        # implicit TLS
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx, timeout=20) as s:
+                s.login(SMTP_USER, SMTP_PASS); s.send_message(msg)
+        else:                                       # 587 (or other) → STARTTLS
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as s:
+                s.ehlo(); s.starttls(context=ctx); s.ehlo()
+                s.login(SMTP_USER, SMTP_PASS); s.send_message(msg)
         return True
     except Exception as e:
         print("  [email] send failed:", e); return False
