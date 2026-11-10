@@ -164,6 +164,10 @@ GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID",
     "218796516810-rjvhmkc177g7elicnh1f6616td6jrekr.apps.googleusercontent.com").strip()
 PLAN_SECONDS  = {"day": 24*3600, "quarter": 90*24*3600}
 FREE_SONGS    = int(os.environ.get("FREE_SONGS", "5"))   # advertised to the frontend
+# Free songs are counted on the SERVER (per IP, or per account when signed in) so
+# incognito / a new browser can't reset them. Day rolls over at midnight in this
+# timezone offset from UTC (hours) — default UTC; set to -7 for US Mountain, etc.
+FREE_RESET_OFFSET = int(os.environ.get("FREE_RESET_OFFSET_HOURS", "0")) * 3600
 DB_FILE       = os.environ.get("DB_FILE", "imicobo.db")
 
 # Email (SMTP) — for sign-up verification + password reset. Password goes in .env.
@@ -184,8 +188,34 @@ _db.execute("""CREATE TABLE IF NOT EXISTS users(
     created_at REAL NOT NULL)""")
 _db.execute("""CREATE TABLE IF NOT EXISTS tokens(
     token TEXT PRIMARY KEY, email TEXT NOT NULL, kind TEXT NOT NULL, expires_at REAL NOT NULL)""")
+_db.execute("""CREATE TABLE IF NOT EXISTS freeplays(
+    ident TEXT NOT NULL, day TEXT NOT NULL, count INTEGER DEFAULT 0, PRIMARY KEY(ident, day))""")
 _db.commit()
 _db_lock = threading.Lock()
+
+# ---- server-side free-song counter (per IP or per account, per day) ----
+def free_day():
+    return time.strftime("%Y-%m-%d", time.gmtime(time.time() + FREE_RESET_OFFSET))
+def free_count(ident):
+    with _db_lock:
+        row = _db.execute("SELECT count FROM freeplays WHERE ident=? AND day=?",
+                          (ident, free_day())).fetchone()
+    return row[0] if row else 0
+def free_remaining(ident):
+    return max(0, FREE_SONGS - free_count(ident))
+def free_consume(ident):
+    """Try to use one free song. Returns (allowed, remaining)."""
+    day = free_day()
+    with _db_lock:
+        row = _db.execute("SELECT count FROM freeplays WHERE ident=? AND day=?", (ident, day)).fetchone()
+        c = row[0] if row else 0
+        if c >= FREE_SONGS:
+            return (False, 0)
+        c += 1
+        _db.execute("INSERT INTO freeplays(ident,day,count) VALUES(?,?,?) "
+                    "ON CONFLICT(ident,day) DO UPDATE SET count=excluded.count", (ident, day, c))
+        _db.commit()
+    return (True, max(0, FREE_SONGS - c))
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 def valid_email(e):  return bool(e and EMAIL_RE.match(e) and len(e) <= 254)
@@ -432,6 +462,11 @@ class Handler(BaseHTTPRequestHandler):
     def _session_email(self):
         return read_session(self._cookie("imb_session"))
 
+    def _free_ident(self):
+        # per-account when signed in (incognito-proof), else per client IP
+        em = self._session_email()
+        return ("u:" + em.lower()) if em else ("ip:" + self._client_ip())
+
     def _base_url(self):
         proto = self.headers.get("X-Forwarded-Proto", "http")
         return f"{proto}://{self.headers.get('Host', 'localhost')}"
@@ -467,6 +502,7 @@ class Handler(BaseHTTPRequestHandler):
                                "plan": product,
                                "plan_label": labels.get(product, "Pass") if product else None,
                                "email": email, "free_songs": FREE_SONGS,
+                               "free_remaining": free_remaining(self._free_ident()),
                                "has_password": has_password(email),
                                "google_client_id": GOOGLE_CLIENT_ID,
                                "stripe_mode": mode})
@@ -676,6 +712,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._json_cookie(
                 {"ok": True, "entitled": ok, "until": until, "email": email},
                 self._session_set_cookie(email))
+
+        # ---- consume one play; the SERVER is the source of truth for the free limit ----
+        if p == "/api/play/consume":
+            email = self._session_email()
+            ok, _, _ = entitlement(email)
+            if ok:
+                return self._json({"allowed": True, "entitled": True, "free_remaining": FREE_SONGS})
+            allowed, rem = free_consume(self._free_ident())
+            return self._json({"allowed": allowed, "entitled": False, "free_remaining": rem})
 
         # ---- sign out: clear the session cookie ----
         if p == "/api/logout":

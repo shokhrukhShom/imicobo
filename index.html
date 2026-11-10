@@ -1087,16 +1087,9 @@ const PAY = (() => {
       authMsg(r.message || "If that email has an account, we sent a reset link.", "ok");
     }catch(_){ authMsg("Couldn't reach the server — try again.", "err"); }
   }
-  // local-midnight reset, stored per browser
-  function freeState(){
-    const today = new Date().toLocaleDateString("en-CA");   // YYYY-MM-DD local
-    let c; try{ c = JSON.parse(localStorage.getItem(FREE_KEY) || "{}"); }catch(_){ c = {}; }
-    if(c.date !== today) c = { date:today, count:0 };
-    return c;
-  }
-  function saveFree(c){ try{ localStorage.setItem(FREE_KEY, JSON.stringify(c)); }catch(_){} }
-  function limit(){ return me.free_songs || 5; }
-  function remaining(){ return Math.max(0, limit() - freeState().count); }
+  // free count now lives on the SERVER (per IP / per account) — /api/me reports it,
+  // so incognito or a new browser can't reset it.
+  function remaining(){ return (me.free_remaining != null) ? me.free_remaining : (me.free_songs || 5); }
 
   function nowSec(){ return Date.now()/1000; }
   // entitled AND not past expiry — so an expired pass stops counting immediately,
@@ -1105,15 +1098,20 @@ const PAY = (() => {
   function outOfFree(){ return !active() && remaining() <= 0; }
   function enforce(){ try{ if(typeof MIC!=='undefined' && MIC.setLocked) MIC.setLocked(outOfFree()); }catch(_){} }
 
-  // called before every song; true = allowed to play
+  // called before every song; the server decides and counts
   async function gate(){
-    // pass lapsed while the page was open → resync with the server first
-    if(me.entitled && me.until && me.until <= nowSec()) await refresh();
+    if(me.entitled && me.until && me.until <= nowSec()) await refresh();  // pass lapsed → resync
     if(active()) return true;              // valid pass → unlimited
-    const c = freeState();
-    if(c.count >= limit()){ show(); enforce(); return false; }
-    c.count++; saveFree(c); render();
-    return true;
+    try{
+      const r = await (await fetch("/api/play/consume", {method:"POST", credentials:"same-origin"})).json();
+      if(r.free_remaining != null) me.free_remaining = r.free_remaining;
+      if(r.entitled){ me.entitled = true; render(); return true; }
+      render();
+      if(!r.allowed){ show(); enforce(); return false; }
+      return true;
+    }catch(_){
+      return true;   // network hiccup → fail open rather than block a legit singer
+    }
   }
 
   function fmtUntil(ts){
