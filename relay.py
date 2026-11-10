@@ -324,9 +324,13 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/me":
             email = self._session_email()
             ok, until = entitlement(email)
+            mode = ("live" if STRIPE_SECRET_KEY.startswith("sk_live")
+                    else "test" if STRIPE_SECRET_KEY.startswith("sk_test")
+                    else "off")
             return self._json({"entitled": ok, "until": until,
                                "email": email, "free_songs": FREE_SONGS,
-                               "google_client_id": GOOGLE_CLIENT_ID})
+                               "google_client_id": GOOGLE_CLIENT_ID,
+                               "stripe_mode": mode})
 
         # Stripe returns the paid user here; confirm payment, unlock this browser.
         if p == "/paid":
@@ -690,6 +694,12 @@ if __name__ == "__main__":
         print(f"  Or from another device:      http://{ips[0]}:{PORT}/")
     print(f"  Up to {MAX_MICS} phones can share one screen code.")
     print(f"  YouTube key: {'set ✓ (in-app search + playback)' if YT_API_KEY else 'NOT set — search opens YouTube instead'}")
+    _smode = ("LIVE ✓" if STRIPE_SECRET_KEY.startswith("sk_live")
+              else "TEST (sandbox) ✓ — card 4242 4242 4242 4242" if STRIPE_SECRET_KEY.startswith("sk_test")
+              else "NOT set — paywall is free-tier only")
+    print(f"  Stripe:      {_smode}")
+    print(f"  Google auth: {'client id set ✓' if GOOGLE_CLIENT_ID else 'NOT set'}")
+    print(f"  App secret:  {'set ✓' if APP_SECRET != b'dev-insecure-change-me' else 'DEFAULT — set APP_SECRET before production'}")
     print(f"  Cache file:  {CACHE_FILE} ({len(cache)} entries)")
     print("\n  Ctrl-C to stop.\n")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

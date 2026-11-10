@@ -192,6 +192,10 @@
   .fine{font-size:11.5px;color:var(--dim);margin:12px 0 0}
   .fine a{color:var(--accent)}
   .gbtn{display:flex;justify-content:center;min-height:40px;margin:4px 0 2px}
+  .gnote{text-align:center;font-size:12.5px;color:var(--dim);margin:2px 0 8px}
+  .testnote{text-align:center;font-size:12px;color:var(--warn);margin:10px 0 0;
+    background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:9px;padding:8px 10px}
+  .testnote b{color:var(--ink);font-family:var(--mono)}
   .signedin{text-align:center;font-size:13px;color:var(--dim);margin:2px 0 6px}
   .signedin b{color:var(--ink)}
   .signedin a{color:var(--accent)}
@@ -220,7 +224,6 @@
   <button class="link" onclick="openHelp()">❔ How to connect</button>
   <button class="link" onclick="MIC.pair()">📱 Pair iPhone</button>
   <button class="link" id="upgradeBtn" onclick="PAY.show()">Upgrade</button>
-  <a class="link coffee" id="coffee" href="https://buymeacoffee.com/shokhrukhshom" target="_blank" rel="noopener">☕ Buy me a coffee</a>
 </nav>
 
 <header class="hero">
@@ -263,20 +266,13 @@
 <!-- instructions modal -->
 <div class="modal" id="help">
   <div class="sheet left">
-    <h3>Connect a microphone</h3>
-    <p class="sub">Two ways to sing — pick whichever you have.</p>
-    <h4>Option A · Use your iPhone as the mic (Wi-Fi)</h4>
+    <h3>Connect your phone as the mic</h3>
+    <p class="sub">Turn your phone into a wireless microphone over Wi-Fi.</p>
     <ol>
       <li>Keep this screen open on your computer or TV.</li>
-      <li>Put your <b>iPhone and this computer on the same Wi-Fi</b> — ideally the <b>5&nbsp;GHz</b> band (often named “…-5G”). Far less lag than 2.4&nbsp;GHz.</li>
+      <li>Put your <b>phone and this computer on the same Wi-Fi</b> — ideally the <b>5&nbsp;GHz</b> band (often named “…-5G”). Far less lag than 2.4&nbsp;GHz.</li>
       <li>Click <b>Pair iPhone</b>, then scan the QR or type the 4-digit code on your phone.</li>
       <li>Sing — your voice comes out of this screen’s speakers, over the music. Watch the bar at the bottom for connection quality.</li>
-    </ol>
-    <h4>Option B · Plug in a microphone (zero lag)</h4>
-    <ol>
-      <li>Plug a USB or 3.5&nbsp;mm mic into this computer.</li>
-      <li>Set it as the input in system sound settings, with “listen/monitor” on so you hear yourself.</li>
-      <li>Hit play on any song and go.</li>
     </ol>
     <p class="sub" style="margin-top:18px">If your voice sounds delayed, it’s almost always the Wi-Fi — move closer to the router or switch to 5&nbsp;GHz.</p>
     <button class="close" onclick="closeHelp()">Got it</button>
@@ -310,8 +306,9 @@
       Signed in as <b id="payEmail">—</b> · <a href="#" onclick="PAY.signout();return false">Sign out</a>
     </div>
     <div id="payAccount">
+      <p class="gnote">Sign in first so your pass works on every device:</p>
       <div id="gbtn" class="gbtn"></div>
-      <div class="ordiv"><span>already bought? sign in above — or grab a pass</span></div>
+      <div class="ordiv"><span>already paid? sign in — or grab a pass</span></div>
     </div>
 
     <div class="plans">
@@ -331,6 +328,7 @@
       Email me occasional holiday &amp; birthday karaoke deals. Unsubscribe anytime.</label>
     <p class="fine">Secure checkout by Stripe. One-time payment — nothing auto-renews.
       <a href="/privacy-policy" target="_blank">Privacy</a></p>
+    <p class="testnote" id="payTest" style="display:none">🧪 Test mode — pay with card <b>4242 4242 4242 4242</b>, any future date &amp; any CVC.</p>
     <button class="close" onclick="PAY.hide()">Maybe later</button>
   </div>
 </div>
@@ -988,6 +986,8 @@ const PAY = (() => {
       if(acEl) acEl.style.display = "block";
       initGoogle();
     }
+    const tn = g("payTest");
+    if(tn) tn.style.display = (me.stripe_mode === "test") ? "block" : "none";
     g("paywall").classList.add("show");
   }
   function hide(){ g("paywall").classList.remove("show"); }
