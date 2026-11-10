@@ -21,6 +21,7 @@ No key? The server still runs — /search and /resolve just report `nokey`,
 and the frontend falls back to opening YouTube directly. Nothing breaks.
 """
 import json, os, random, socket, threading, time, urllib.parse, urllib.request
+import sqlite3, hmac, hashlib, base64
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -149,6 +150,112 @@ def _roster(room):
             for mid, m in sorted(room["mics"].items(), key=lambda kv: int(kv[0]))]
 
 
+
+# ============================================================ accounts + paywall
+APP_SECRET            = os.environ.get("APP_SECRET", "dev-insecure-change-me").encode()
+STRIPE_SECRET_KEY     = os.environ.get("STRIPE_SECRET_KEY", "").strip()
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
+PRICE_DAY     = os.environ.get("STRIPE_PRICE_DAY",     "price_1Ua1xhEOL6Jd9NbKzE2Ric2A")
+PRICE_QUARTER = os.environ.get("STRIPE_PRICE_QUARTER", "price_1Ua1xhEOL6Jd9NbKz5YmPQ99")
+# Google Sign-In — Client ID is public (safe in the page); no client secret needed
+# for the ID-token flow. Verified server-side against Google's tokeninfo endpoint.
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID",
+    "218796516810-rjvhmkc177g7elicnh1f6616td6jrekr.apps.googleusercontent.com").strip()
+PLAN_SECONDS  = {"day": 24*3600, "quarter": 90*24*3600}
+FREE_SONGS    = int(os.environ.get("FREE_SONGS", "5"))   # advertised to the frontend
+DB_FILE       = os.environ.get("DB_FILE", "imicobo.db")
+
+_db = sqlite3.connect(DB_FILE, check_same_thread=False)
+_db.execute("""CREATE TABLE IF NOT EXISTS grants(
+    checkout_id TEXT PRIMARY KEY, email TEXT NOT NULL, product TEXT,
+    expires_at REAL NOT NULL, created_at REAL NOT NULL)""")
+_db.execute("""CREATE TABLE IF NOT EXISTS consents(
+    email TEXT PRIMARY KEY, opted_in INTEGER, updated_at REAL)""")
+_db.commit()
+_db_lock = threading.Lock()
+
+def grant_access(email, product, checkout_id, seconds):
+    now = time.time()
+    with _db_lock:
+        _db.execute("INSERT OR IGNORE INTO grants(checkout_id,email,product,expires_at,created_at)"
+                    " VALUES(?,?,?,?,?)", (checkout_id, email.lower(), product, now+seconds, now))
+        _db.commit()
+
+def entitlement(email):
+    if not email: return (False, 0)
+    with _db_lock:
+        row = _db.execute("SELECT MAX(expires_at) FROM grants WHERE email=?", (email.lower(),)).fetchone()
+    until = row[0] if row and row[0] else 0
+    return (until > time.time(), until)
+
+def set_consent(email, opted_in):
+    with _db_lock:
+        _db.execute("INSERT INTO consents(email,opted_in,updated_at) VALUES(?,?,?) "
+                    "ON CONFLICT(email) DO UPDATE SET opted_in=excluded.opted_in, updated_at=excluded.updated_at",
+                    (email.lower(), 1 if opted_in else 0, time.time()))
+        _db.commit()
+
+# signed session cookie — identity only; entitlement ALWAYS comes from the DB
+def _b64(b):  return base64.urlsafe_b64encode(b).decode().rstrip("=")
+def _unb64(s):return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+def make_session(email):
+    payload = _b64(json.dumps({"email": email.lower(), "iat": int(time.time())}).encode())
+    sig = hmac.new(APP_SECRET, payload.encode(), hashlib.sha256).hexdigest()
+    return payload + "." + sig
+def read_session(cookie):
+    if not cookie or "." not in cookie: return None
+    payload, _, sig = cookie.partition(".")
+    good = hmac.new(APP_SECRET, payload.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(good, sig): return None
+    try:    return json.loads(_unb64(payload)).get("email")
+    except Exception: return None
+
+# Stripe REST, stdlib only (no SDK dependency)
+def stripe_request(method, path, params=None):
+    url = "https://api.stripe.com/v1/" + path
+    data = None
+    if method == "POST" and params:
+        data = urllib.parse.urlencode(params).encode()
+    elif method == "GET" and params:
+        url += "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Authorization", "Bearer " + STRIPE_SECRET_KEY)
+    if data: req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    with urllib.request.urlopen(req, timeout=12) as rsp:
+        return json.load(rsp)
+
+def verify_google_token(cred):
+    """Verify a Google ID token (JWT) via Google's tokeninfo endpoint, which
+    checks the signature and expiry for us. Returns a verified lowercased email
+    or None. Keeps the relay dependency-free (no crypto library needed)."""
+    if not cred or not GOOGLE_CLIENT_ID:
+        return None
+    try:
+        url = "https://oauth2.googleapis.com/tokeninfo?" + urllib.parse.urlencode({"id_token": cred})
+        req = urllib.request.Request(url, headers={"User-Agent": "imicobo/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            info = json.load(r)
+    except Exception:
+        return None
+    if info.get("aud") != GOOGLE_CLIENT_ID:
+        return None
+    if info.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+        return None
+    if str(info.get("email_verified")).lower() not in ("true", "1"):
+        return None
+    email = (info.get("email") or "").strip().lower()
+    return email or None
+
+def stripe_webhook_ok(raw_bytes, sig_header):
+    if not STRIPE_WEBHOOK_SECRET or not sig_header: return False
+    parts = dict(p.split("=", 1) for p in sig_header.split(",") if "=" in p)
+    t, v1 = parts.get("t"), parts.get("v1")
+    if not t or not v1: return False
+    signed = t.encode() + b"." + raw_bytes
+    good = hmac.new(STRIPE_WEBHOOK_SECRET.encode(), signed, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(good, v1)
+
+
 class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, status=200):
         body = json.dumps(obj).encode()
@@ -157,6 +264,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _json_cookie(self, obj, cookie, status=200):
+        body = json.dumps(obj).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Set-Cookie", cookie)
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
@@ -172,6 +288,30 @@ class Handler(BaseHTTPRequestHandler):
             return xff.split(",")[0].strip()
         return self.client_address[0] if self.client_address else "?"
 
+    def _cookie(self, name):
+        for part in self.headers.get("Cookie", "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == name: return v
+        return None
+
+    def _session_email(self):
+        return read_session(self._cookie("imb_session"))
+
+    def _base_url(self):
+        proto = self.headers.get("X-Forwarded-Proto", "http")
+        return f"{proto}://{self.headers.get('Host', 'localhost')}"
+
+    def _redirect(self, location, set_cookie=None):
+        self.send_response(302)
+        self.send_header("Location", location)
+        if set_cookie: self.send_header("Set-Cookie", set_cookie)
+        self.end_headers()
+
+    def _session_set_cookie(self, email):
+        secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+        return (f"imb_session={make_session(email)}; Path=/; Max-Age=15552000; "
+                f"HttpOnly; SameSite=Lax{secure}")
+
     def do_OPTIONS(self):
         self._json({"ok": True})
 
@@ -179,6 +319,34 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         p = u.path
+
+        # ---- accounts / paywall ----
+        if p == "/api/me":
+            email = self._session_email()
+            ok, until = entitlement(email)
+            return self._json({"entitled": ok, "until": until,
+                               "email": email, "free_songs": FREE_SONGS,
+                               "google_client_id": GOOGLE_CLIENT_ID})
+
+        # Stripe returns the paid user here; confirm payment, unlock this browser.
+        if p == "/paid":
+            sid = self._q(u, "session_id")
+            if not sid or not STRIPE_SECRET_KEY:
+                return self._redirect(self._base_url() + "/?checkout=error")
+            try:
+                s = stripe_request("GET", "checkout/sessions/" + sid)
+            except Exception:
+                return self._redirect(self._base_url() + "/?checkout=error")
+            if s.get("payment_status") == "paid":
+                email = ((s.get("customer_details") or {}).get("email") or "").lower()
+                product = (s.get("metadata") or {}).get("product", "day")
+                if email:
+                    grant_access(email, product, sid, PLAN_SECONDS.get(product, 86400))
+                    if (s.get("metadata") or {}).get("consent") == "1":
+                        set_consent(email, True)
+                    return self._redirect(self._base_url() + "/?welcome=1",
+                                          self._session_set_cookie(email))
+            return self._redirect(self._base_url() + "/?checkout=incomplete")
 
         # ---- karaoke: resolve one song title -> one playable video id ----
         if p == "/resolve":
@@ -286,6 +454,20 @@ class Handler(BaseHTTPRequestHandler):
                 m = room["mics"].get(mic) if room else None
                 return self._json({"sdp": m.get(p.strip("/")) if m else None})
 
+        # pretty URLs for the legal pages (linked from the paywall + footer,
+        # and required by the Google OAuth consent screen)
+        LEGAL = {"/privacy-policy": "privacy.html", "/privacy": "privacy.html",
+                 "/terms": "terms.html", "/terms-of-service": "terms.html"}
+        if p in LEGAL:
+            try:
+                with open(LEGAL[p], "rb") as f:
+                    body = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers(); self.wfile.write(body); return
+            except Exception:
+                return self._json({"error": "page missing"}, 404)
+
         # ---- static files (index.html, connect.html, qr.js, ...) ----
         name = p.lstrip("/") or "index.html"
         name = os.path.normpath(name)
@@ -317,7 +499,72 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         p = u.path
         n = int(self.headers.get("Content-Length", 0))
-        raw = self.rfile.read(n).decode() if n else ""
+        raw_bytes = self.rfile.read(n) if n else b""
+        raw = raw_bytes.decode("utf-8", "replace")
+
+        # ---- sign in with Google (ID-token flow) ----
+        if p == "/api/auth/google":
+            try:    body = json.loads(raw) if raw else {}
+            except Exception: body = {}
+            email = verify_google_token(body.get("credential"))
+            if not email:
+                return self._json({"error": "Sign-in failed."}, 401)
+            ok, until = entitlement(email)
+            return self._json_cookie(
+                {"ok": True, "entitled": ok, "until": until, "email": email},
+                self._session_set_cookie(email))
+
+        # ---- sign out: clear the session cookie ----
+        if p == "/api/logout":
+            return self._json_cookie(
+                {"ok": True},
+                "imb_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
+
+        # ---- paywall: create a Stripe Checkout session ----
+        if p == "/api/checkout":
+            if not STRIPE_SECRET_KEY:
+                return self._json({"error": "Payments aren't set up yet."}, 503)
+            try:    body = json.loads(raw) if raw else {}
+            except Exception: body = {}
+            plan = "quarter" if body.get("plan") == "quarter" else "day"
+            price = PRICE_DAY if plan == "day" else PRICE_QUARTER
+            base = self._base_url()
+            params = {
+                "mode": "payment",
+                "line_items[0][price]": price,
+                "line_items[0][quantity]": "1",
+                "success_url": base + "/paid?session_id={CHECKOUT_SESSION_ID}",
+                "cancel_url":  base + "/?checkout=cancel",
+                "metadata[product]": plan,
+                "metadata[consent]": "1" if body.get("consent") else "0",
+                "allow_promotion_codes": "true",
+            }
+            # If signed in, tie the purchase to that account's email.
+            signed_in = self._session_email()
+            if signed_in:
+                params["customer_email"] = signed_in
+            try:
+                s = stripe_request("POST", "checkout/sessions", params)
+                return self._json({"url": s["url"]})
+            except Exception as e:
+                return self._json({"error": "Couldn't start checkout.", "detail": str(e)}, 502)
+
+        # ---- paywall: Stripe webhook (reliable backstop for granting access) ----
+        if p == "/api/stripe/webhook":
+            if not stripe_webhook_ok(raw_bytes, self.headers.get("Stripe-Signature", "")):
+                return self._json({"error": "bad signature"}, 400)
+            try:    event = json.loads(raw)
+            except Exception: return self._json({"error": "bad json"}, 400)
+            if event.get("type") == "checkout.session.completed":
+                s = event["data"]["object"]
+                email = ((s.get("customer_details") or {}).get("email") or "").lower()
+                product = (s.get("metadata") or {}).get("product", "day")
+                if email and s.get("payment_status") == "paid":
+                    grant_access(email, product, s.get("id", "wh_%f" % time.time()),
+                                 PLAN_SECONDS.get(product, 86400))
+                    if (s.get("metadata") or {}).get("consent") == "1":
+                        set_consent(email, True)
+            return self._json({"received": True})
 
         # screen opens / resumes a room
         if p == "/session":

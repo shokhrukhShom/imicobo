@@ -127,6 +127,88 @@ should return `{"url": "https://...mzstatic.com/..."}`.
 
 ---
 
+## 7. Turn on Google sign-in
+
+Sign-in lets a paying customer restore their pass on any device by signing in
+with the same Google email. It uses Google's ID-token flow, so **no client
+secret is needed** and there are no redirect URIs to configure — just two things
+in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials):
+
+1. **Authorized JavaScript origins** — on your OAuth 2.0 Client ID, add:
+   - `https://imicobo.com`
+   - `https://www.imicobo.com`
+
+2. **Publish the consent screen** — OAuth consent screen → **Publish app**
+   (move it from "Testing" to "In production"). The app only requests basic
+   profile/email, which are non-sensitive scopes, so this needs **no Google
+   review**. While it's still in "Testing", only accounts you add as test users
+   can sign in.
+
+The Client ID is already baked into the app; override it with `GOOGLE_CLIENT_ID`
+in `.env` only if you make a new one. Nothing else to deploy — the button and the
+`/api/auth/google` verifier are already in the build.
+
+> The client secret from your earlier screenshot isn't used by this flow, but
+> rotate it anyway (it was shown in a screenshot) — Console → that credential →
+> *Reset secret*.
+
+---
+
+## 8. Turn on payments (Stripe)
+
+The paywall is free-tier until you add Stripe keys — until then `/api/checkout`
+politely returns "Payments aren't set up yet" and everyone gets the 5 free songs
+a day. To accept money:
+
+**a) Fill in the secrets in `/opt/imicobo/.env`:**
+
+```bash
+nano /opt/imicobo/.env
+```
+
+```
+APP_SECRET=<a long random string>        # python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+STRIPE_SECRET_KEY=sk_test_...            # test key while sandboxing; sk_live_... for real money
+STRIPE_WEBHOOK_SECRET=whsec_...          # from step (b) below
+```
+
+The two price IDs already default to your sandbox products inside `relay.py`.
+When you switch to live mode, add your **live** price IDs too:
+
+```
+STRIPE_PRICE_DAY=price_...
+STRIPE_PRICE_QUARTER=price_...
+```
+
+**b) Create the webhook** in Stripe → *Developers → Webhooks → Add endpoint*:
+- Endpoint URL: **https://imicobo.com/api/stripe/webhook**
+- Event to send: **checkout.session.completed**
+- Copy the endpoint's **Signing secret** (`whsec_...`) into `STRIPE_WEBHOOK_SECRET` above.
+
+**c) Restart:**
+
+```bash
+chown imicobo:imicobo /opt/imicobo/.env
+systemctl restart imicobo
+```
+
+**How it fits together:** a buyer clicks a pass → `/api/checkout` creates a Stripe
+Checkout session → they pay on Stripe's hosted page → Stripe calls your webhook →
+the server records the pass against their email and sets a signed login cookie when
+they return. The screen checks `/api/me` to unlock unlimited singing. The database
+(`imicobo.db`, created automatically next to the app) is the source of truth; the
+cookie just remembers who they are on that device.
+
+> **Security:** never paste these secrets into chat, the code, or git — they live
+> only in `.env` on the server. If a Stripe key or your Google client secret was
+> ever shown in a screenshot or message, rotate it in the Stripe/Google dashboard
+> before going live.
+
+Test the whole flow in Stripe **test mode** first (card `4242 4242 4242 4242`,
+any future expiry/CVC) before flipping to live keys.
+
+---
+
 ## Updating later (the everyday workflow)
 
 On your Mac: edit → `git commit` → `git push`.

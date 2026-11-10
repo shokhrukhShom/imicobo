@@ -172,6 +172,36 @@
     padding:12px 18px;border-radius:12px;font-size:14px;box-shadow:0 10px 30px rgba(0,0,0,.5);
     opacity:0;pointer-events:none;transition:.25s;max-width:90vw;text-align:center}
   .toast.show{opacity:1}
+  /* paywall */
+  .nav .link.pro{color:var(--ok);cursor:default}
+  .nav .link.pro:hover{background:none}
+  .plans{display:flex;gap:10px;margin:14px 0}
+  .plan{flex:1;position:relative;background:var(--panel2);border:1px solid var(--line);
+    border-radius:14px;padding:18px 12px 14px;cursor:pointer;text-align:center;color:var(--ink);
+    font:inherit;transition:.15s}
+  .plan:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .plan.best{border-color:var(--accent)}
+  .plan .tag{position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:var(--accent);
+    color:#06231f;font:700 10px/1 inherit;padding:4px 9px;border-radius:999px;white-space:nowrap;letter-spacing:.3px}
+  .plan .pname{font-weight:700;font-size:14px}
+  .plan .pprice{font:800 26px var(--mono);margin:7px 0 2px;color:var(--accent)}
+  .plan .pdesc{font-size:12px;color:var(--dim)}
+  .consent{display:flex;gap:9px;align-items:flex-start;text-align:left;font-size:12.5px;
+    color:var(--dim);margin:4px 2px 2px;cursor:pointer}
+  .consent input{margin-top:2px;flex:none}
+  .fine{font-size:11.5px;color:var(--dim);margin:12px 0 0}
+  .fine a{color:var(--accent)}
+  .gbtn{display:flex;justify-content:center;min-height:40px;margin:4px 0 2px}
+  .signedin{text-align:center;font-size:13px;color:var(--dim);margin:2px 0 6px}
+  .signedin b{color:var(--ink)}
+  .signedin a{color:var(--accent)}
+  .ordiv{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:11.5px;margin:12px 2px 2px;text-transform:lowercase}
+  .ordiv::before,.ordiv::after{content:"";flex:1;height:1px;background:var(--line)}
+  /* footer */
+  .foot{text-align:center;padding:30px 16px calc(var(--barh) + 28px);color:var(--dim);font-size:12.5px}
+  .foot a{color:var(--dim);text-decoration:none;margin:0 3px}
+  .foot a:hover{color:var(--ink)}
+  .foot .c{display:block;margin-top:7px;opacity:.65}
 
   @media (max-width:640px){
     .tag{display:none}
@@ -189,12 +219,13 @@
   <span class="nav-spacer"></span>
   <button class="link" onclick="openHelp()">❔ How to connect</button>
   <button class="link" onclick="MIC.pair()">📱 Pair iPhone</button>
+  <button class="link" id="upgradeBtn" onclick="PAY.show()">Upgrade</button>
   <a class="link coffee" id="coffee" href="https://buymeacoffee.com/shokhrukhshom" target="_blank" rel="noopener">☕ Buy me a coffee</a>
 </nav>
 
 <header class="hero">
   <h1>Sing your favorite karaoke online!</h1>
-  <p>Free · no account · pick a song and the words are on screen.</p>
+  <p>5 free songs a day · pick a song and the words are on screen.</p>
   <form class="search" onsubmit="return doSearch(event)">
     <input id="q" type="search" placeholder="Search any song…  e.g. Bohemian Rhapsody" autocomplete="off">
     <button type="submit">Search</button>
@@ -202,6 +233,11 @@
 </header>
 
 <main id="main"><!-- rows injected here --></main>
+
+<footer class="foot">
+  <a href="/">Home</a> · <a href="/privacy-policy" target="_blank" rel="noopener">Privacy</a> · <a href="/terms" target="_blank" rel="noopener">Terms</a>
+  <span class="c">© 2026 iMicobo</span>
+</footer>
 
 <!-- immersive player -->
 <div class="overlay" id="overlay">
@@ -264,6 +300,42 @@
 <audio id="micAudio" autoplay></audio>
 <div class="toast" id="toast"></div>
 
+<!-- paywall modal -->
+<div class="modal" id="paywall">
+  <div class="sheet">
+    <h3 id="payTitle">Keep the party going 🎉</h3>
+    <p class="sub" id="paySub">You've used your 5 free songs for today. Unlock unlimited singing — up to 6 mics at once.</p>
+
+    <div id="paySignedIn" class="signedin" style="display:none">
+      Signed in as <b id="payEmail">—</b> · <a href="#" onclick="PAY.signout();return false">Sign out</a>
+    </div>
+    <div id="payAccount">
+      <div id="gbtn" class="gbtn"></div>
+      <div class="ordiv"><span>already bought? sign in above — or grab a pass</span></div>
+    </div>
+
+    <div class="plans">
+      <button class="plan" onclick="PAY.buy('day')">
+        <div class="pname">Day Pass</div>
+        <div class="pprice">$3.99</div>
+        <div class="pdesc">Unlimited for 24 hours</div>
+      </button>
+      <button class="plan best" onclick="PAY.buy('quarter')">
+        <div class="tag">BEST VALUE</div>
+        <div class="pname">3-Month Pass</div>
+        <div class="pprice">$14.99</div>
+        <div class="pdesc">Unlimited for 90 days</div>
+      </button>
+    </div>
+    <label class="consent"><input type="checkbox" id="consentChk">
+      Email me occasional holiday &amp; birthday karaoke deals. Unsubscribe anytime.</label>
+    <p class="fine">Secure checkout by Stripe. One-time payment — nothing auto-renews.
+      <a href="/privacy-policy" target="_blank">Privacy</a></p>
+    <button class="close" onclick="PAY.hide()">Maybe later</button>
+  </div>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async></script>
 <script src="qr.js"></script>
 <script>
 /* ============================================================= CATALOG */
@@ -471,6 +543,7 @@ let player=null, ytReady=false, pendingId=null;
 function onYouTubeIframeAPIReady(){ ytReady=true; if(pendingId){ const id=pendingId; pendingId=null; startPlayer(id);} }
 
 async function play(song){
+  if(!(await PAY.gate())) return;      // free-song limit / entitlement check
   const q = queryOf(song);
   pushRecent(song);
   openOverlay(song.t + (song.a? " — "+song.a : ""));
@@ -811,6 +884,136 @@ const MIC = (() => {
   function closeModal(){ g('pair').classList.remove('show'); }
 
   return { pair, disconnect, disconnectAll, closeModal };
+})();
+
+/* ============================================================= PAYWALL */
+const PAY = (() => {
+  const g = id => document.getElementById(id);
+  const FREE_KEY = "imb.free";
+  let me = { entitled:false, until:0, email:null, free_songs:5 };
+
+  async function refresh(){
+    try{ me = await (await fetch("/api/me", {credentials:"same-origin"})).json(); }
+    catch(_){ me = { entitled:false, until:0, email:null, free_songs:5 }; }
+    render(); initGoogle(); return me;
+  }
+
+  /* ---- Google Sign-In (ID-token flow) ---- */
+  let gReady = false;
+  function initGoogle(tries){
+    if(gReady || !me.google_client_id) return;
+    if(!(window.google && google.accounts && google.accounts.id)){
+      if((tries||0) < 40) return void setTimeout(()=>initGoogle((tries||0)+1), 150);
+      return;   // GIS script blocked/failed — buying still works
+    }
+    try{
+      google.accounts.id.initialize({ client_id: me.google_client_id, callback: onCred, auto_select:false });
+      const el = g("gbtn");
+      if(el){ el.innerHTML=""; google.accounts.id.renderButton(el,
+        { theme:"filled_black", size:"large", shape:"pill", text:"signin_with", width:260 }); }
+      gReady = true;
+    }catch(_){}
+  }
+  async function onCred(resp){
+    if(!resp || !resp.credential) return;
+    try{
+      const r = await (await fetch("/api/auth/google", {
+        method:"POST", credentials:"same-origin",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ credential: resp.credential })
+      })).json();
+      if(!r.ok){ toast("Sign-in didn't work — try again."); return; }
+      await refresh();
+      if(me.entitled){ hide(); toast("🎉 Pass restored — sing away!"); }
+      else { toast("Signed in. Grab a pass to go unlimited."); }
+    }catch(_){ toast("Sign-in didn't work — try again."); }
+  }
+  async function signout(){
+    try{ await fetch("/api/logout", { method:"POST", credentials:"same-origin" }); }catch(_){}
+    await refresh();
+    toast("Signed out.");
+  }
+  // local-midnight reset, stored per browser
+  function freeState(){
+    const today = new Date().toLocaleDateString("en-CA");   // YYYY-MM-DD local
+    let c; try{ c = JSON.parse(localStorage.getItem(FREE_KEY) || "{}"); }catch(_){ c = {}; }
+    if(c.date !== today) c = { date:today, count:0 };
+    return c;
+  }
+  function saveFree(c){ try{ localStorage.setItem(FREE_KEY, JSON.stringify(c)); }catch(_){} }
+  function limit(){ return me.free_songs || 5; }
+  function remaining(){ return Math.max(0, limit() - freeState().count); }
+
+  // called before every song; true = allowed to play
+  async function gate(){
+    if(me.entitled) return true;
+    const c = freeState();
+    if(c.count >= limit()){ show(); return false; }
+    c.count++; saveFree(c); render();
+    return true;
+  }
+
+  function fmtUntil(ts){
+    try{ return new Date(ts*1000).toLocaleDateString(undefined,{month:"short",day:"numeric"}); }
+    catch(_){ return ""; }
+  }
+  function render(){
+    const btn = g("upgradeBtn"); if(!btn) return;
+    if(me.entitled){
+      btn.textContent = "✓ Unlimited";
+      btn.classList.add("pro");
+      btn.title = me.until ? ("Pro until " + fmtUntil(me.until)) : "Unlimited";
+    } else {
+      const r = remaining();
+      btn.textContent = r > 0 ? ("Upgrade · " + r + " free left") : "Upgrade";
+      btn.classList.remove("pro");
+      btn.title = "";
+    }
+  }
+
+  function show(){
+    if(me.entitled) return;            // nothing to sell
+    const r = remaining();
+    g("paySub").textContent = r > 0
+      ? ("You have " + r + " free song" + (r===1?"":"s") + " left today. Go unlimited — up to 6 mics at once.")
+      : "You've used your 5 free songs for today. Unlock unlimited singing — up to 6 mics at once.";
+    // signed-in users see their account; others see the Google button
+    const inEl = g("paySignedIn"), acEl = g("payAccount");
+    if(me.email){
+      g("payEmail").textContent = me.email;
+      if(inEl) inEl.style.display = "block";
+      if(acEl) acEl.style.display = "none";
+    } else {
+      if(inEl) inEl.style.display = "none";
+      if(acEl) acEl.style.display = "block";
+      initGoogle();
+    }
+    g("paywall").classList.add("show");
+  }
+  function hide(){ g("paywall").classList.remove("show"); }
+
+  async function buy(plan){
+    const consent = !!(g("consentChk") && g("consentChk").checked);
+    try{
+      const r = await (await fetch("/api/checkout", {
+        method:"POST", credentials:"same-origin",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ plan, consent })
+      })).json();
+      if(r.url){ location.href = r.url; }
+      else { toast(r.error || "Checkout isn't available right now."); }
+    }catch(_){ toast("Checkout isn't available right now."); }
+  }
+
+  function initParams(){
+    const p = new URLSearchParams(location.search);
+    if(p.get("welcome")){ toast("🎉 You're in — sing all you want!"); history.replaceState({}, "", "/"); }
+    else if(p.get("checkout") === "cancel"){ history.replaceState({}, "", "/"); }
+    else if(p.get("checkout")){ toast("Checkout didn't complete."); history.replaceState({}, "", "/"); }
+  }
+
+  refresh().then(initParams);
+  return { gate, show, hide, buy, refresh, remaining, signout };
 })();
 
 render();
