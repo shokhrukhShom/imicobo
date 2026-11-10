@@ -12,6 +12,12 @@
     --ink:#e8eef5; --dim:#8593a5; --accent:#5eead4; --ok:#4ade80;
     --warn:#fbbf24; --bad:#f87171; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
   }
+  .fx{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0 4px;width:100%}
+  .fx .lbl{grid-column:1/-1;font-size:12px;color:var(--dim);text-align:left;margin-bottom:-2px}
+  .fx button{background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    font:inherit;font-size:13.5px;padding:11px;border-radius:11px;cursor:pointer;transition:.12s}
+  .fx button:hover{border-color:var(--accent)}
+  .fx button.on{background:var(--accent);color:#06231f;border-color:var(--accent);font-weight:700}
   *{box-sizing:border-box}
   body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);
     font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
@@ -64,6 +70,13 @@
       <div class="state" id="state">Connecting…</div>
       <div class="meter"><i id="meter"></i></div>
       <div class="vol">🔉<input type="range" id="vol" min="0" max="1" step="0.01" value="0.5">🔊</div>
+      <div class="fx" id="fx">
+        <div class="lbl">Voice effect</div>
+        <button data-fx="Clean" class="on" onclick="setPreset('Clean')">✨ Clean</button>
+        <button data-fx="Karaoke" onclick="setPreset('Karaoke')">🎤 Karaoke</button>
+        <button data-fx="Big Room" onclick="setPreset('Big Room')">🏛️ Big Room</button>
+        <button data-fx="Speech" onclick="setPreset('Speech')">💬 Speech</button>
+      </div>
       <button class="ghost" onclick="leave()">Leave</button>
     </div>
   </div>
@@ -151,9 +164,26 @@ function iceDone(pc){ return new Promise(res=>{
   pc.addEventListener('icegatheringstatechange',c); setTimeout(res,3000);
 });}
 
+// Same presets as the iOS app (Effects.swift). Knobs are 0..1; the receiver
+// scales them to real reverb/echo/EQ. Shared effect — applies to the whole room.
+const PRESETS = {
+  "Clean":    { reverb:0.00, reverbSize:0.40, echo:0.00, echoTime:0.30, echoFeed:0.35, bass:0.50, mid:0.50, treble:0.50, compress:true },
+  "Karaoke":  { reverb:0.35, reverbSize:0.50, echo:0.12, echoTime:0.28, echoFeed:0.25, bass:0.45, mid:0.50, treble:0.62, compress:true },
+  "Big Room": { reverb:0.65, reverbSize:0.85, echo:0.20, echoTime:0.42, echoFeed:0.40, bass:0.50, mid:0.48, treble:0.58, compress:true },
+  "Speech":   { reverb:0.00, reverbSize:0.30, echo:0.00, echoTime:0.30, echoFeed:0.30, bass:0.40, mid:0.58, treble:0.55, compress:true },
+};
+let preset = "Clean";
+
 function sendFx(){
   if(!dc || dc.readyState!=='open') return;
-  dc.send(JSON.stringify({ muted, volume: +$('vol').value }));
+  const fx = PRESETS[preset] || PRESETS["Clean"];
+  dc.send(JSON.stringify(Object.assign({ muted, volume: +$('vol').value }, fx)));
+}
+function setPreset(name){
+  if(!PRESETS[name]) return;
+  preset = name;
+  document.querySelectorAll('#fx button').forEach(b => b.classList.toggle('on', b.dataset.fx === name));
+  sendFx();
 }
 $('vol') && $('vol').addEventListener('input', sendFx);
 
