@@ -231,9 +231,16 @@
     .card .thumb{height:92px}
   }
   audio{display:none}
+  .soundgate{position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:300;
+    display:none;align-items:center;gap:8px;background:var(--accent);color:#06231f;
+    font:700 15px/1 inherit;padding:14px 22px;border-radius:999px;cursor:pointer;
+    box-shadow:0 8px 30px rgba(0,0,0,.45);animation:sgpulse 1.6s ease-in-out infinite}
+  .soundgate.show{display:flex}
+  @keyframes sgpulse{0%,100%{transform:translateX(-50%) scale(1)}50%{transform:translateX(-50%) scale(1.04)}}
 </style>
 </head>
 <body>
+<div class="soundgate" id="soundGate" onclick="enableSound()">🔊 Tap to enable sound</div>
 
 <nav class="nav">
   <div class="brand" onclick="goHome()"><span>iMic<span class="dot">o</span>bo</span></div>
@@ -780,9 +787,20 @@ const MIC = (() => {
   function kickAudio(){
     if(ctx && ctx.state!=='running') ctx.resume().then(setMode).catch(()=>{});
     Object.values(mics).forEach(m=>{ if(m.audio) m.audio.play().catch(()=>{}); });  // Safari: resume on gesture
+    setTimeout(refreshSoundGate, 200);
   }
   function unlockAudio(){ kickAudio(); }
   ['click','keydown','touchstart','pointerdown'].forEach(ev=>document.addEventListener(ev,kickAudio));
+  // "Tap to enable sound" — browsers block audio until the screen gets a gesture.
+  function soundBlocked(){
+    if(ctx && ctx.state==='suspended') return true;
+    return Object.values(mics).some(m => m.audio && m.audio.paused);
+  }
+  function refreshSoundGate(){
+    const g=document.getElementById('soundGate'); if(!g) return;
+    g.classList.toggle('show', Object.keys(mics).length>0 && soundBlocked());
+  }
+  function enableSound(){ kickAudio(); setTimeout(refreshSoundGate, 250); }
 
   /* ---- bottom status bar ---- */
   function setBar(cls, html, stat){
@@ -839,7 +857,7 @@ const MIC = (() => {
       if(m.hasOffer && !mics[m.id]) startMic(m.id, m.name);
     }
     for(const id of Object.keys(mics)) if(!live.has(id)) removeMic(id);
-    renderRoster();
+    renderRoster(); refreshSoundGate();
   }
 
   async function startMic(id, name){
@@ -872,7 +890,12 @@ const MIC = (() => {
     const a=document.createElement('audio');
     a.autoplay=true; a.playsInline=true; a.muted=false; a.style.display='none';
     document.body.appendChild(a);
-    a.srcObject=stream; a.play().catch(()=>{}); m.audio=a;
+    a.srcObject=stream; m.audio=a;
+    const tryPlay=()=>{ a.play().then(refreshSoundGate).catch(refreshSoundGate); };
+    tryPlay();
+    a.addEventListener('canplay', tryPlay);
+    const _tr=(stream.getAudioTracks&&stream.getAudioTracks()[0]);
+    if(_tr) _tr.addEventListener('unmute', tryPlay);
     // Web Audio effects are optional — wrap so a Safari hiccup can't kill the raw voice.
     try{
       if(!ctx) buildChain();
@@ -881,7 +904,7 @@ const MIC = (() => {
     }catch(e){ /* no Web Audio here -> raw dry still plays live */ }
     try{ const r=m.pc.getReceivers().find(x=>x.track&&x.track.kind==='audio');
          if(r){ if('jitterBufferTarget' in r) r.jitterBufferTarget=0; if('playoutDelayHint' in r) r.playoutDelayHint=0; } }catch(_){}
-    applyLevel(m); setMode();
+    applyLevel(m); setMode(); refreshSoundGate();
   }
   function applyLevel(m, mode){
     if(mode===undefined) mode = currentMode();
@@ -905,7 +928,7 @@ const MIC = (() => {
     try{ m.pc && m.pc.close(); }catch(_){}
     try{ m.src && m.src.disconnect(); m.gain && m.gain.disconnect(); }catch(_){}
     if(m.audio){ m.audio.srcObject=null; m.audio.remove(); }
-    delete mics[id]; renderRoster(); renderBar();
+    delete mics[id]; renderRoster(); renderBar(); refreshSoundGate();
   }
   function iceDone(pc){ return new Promise(res=>{
     if(pc.iceGatheringState==='complete') return res();
