@@ -150,6 +150,8 @@
   .pqr{width:200px;height:200px;background:#fff;border-radius:14px;padding:10px;margin:14px auto 4px;display:none}
   .pqr.show{display:block}.pqr svg{width:100%;height:100%;display:block}
   .phint{color:var(--dim);font-size:13.5px;margin-top:8px}
+  .miclink{display:inline-block;margin-top:14px;color:var(--accent);font-size:13.5px;text-decoration:none}
+  .miclink:hover{text-decoration:underline}
   .proster{display:flex;flex-direction:column;gap:8px;margin:14px 0 2px;text-align:left}
   .pmic{display:flex;align-items:center;gap:10px;background:var(--panel2);
     border:1px solid var(--line);border-radius:12px;padding:9px 11px}
@@ -247,7 +249,7 @@
   <span class="tag">Sing your favorite karaoke online!</span>
   <span class="nav-spacer"></span>
   <button class="link" onclick="openHelp()">❔ How to connect</button>
-  <button class="link" onclick="MIC.pair()">📱 Pair iPhone</button>
+  <button class="link" onclick="MIC.pair()">📱 Pair phone</button>
   <button class="link" id="authBtn" onclick="PAY.openAuth()">Sign in</button>
   <button class="link" id="upgradeBtn" onclick="PAY.open()">Upgrade</button>
 </nav>
@@ -286,7 +288,7 @@
   <span class="txt" id="micText">Wireless mic: <b>not connected</b></span>
   <span class="stat" id="micStat"></span>
   <span class="sp"></span>
-  <button class="go" id="micBtn" onclick="MIC.pair()">Pair iPhone</button>
+  <button class="go" id="micBtn" onclick="MIC.pair()">Pair phone</button>
 </div>
 
 <!-- instructions modal -->
@@ -297,7 +299,7 @@
     <ol>
       <li>Keep this screen open on your computer or TV.</li>
       <li>Put your <b>phone and this computer on the same Wi-Fi</b> — ideally the <b>5&nbsp;GHz</b> band (often named “…-5G”). Far less lag than 2.4&nbsp;GHz.</li>
-      <li>Click <b>Pair iPhone</b>, then scan the QR or type the 4-digit code on your phone.</li>
+      <li>Click <b>Pair phone</b>, then scan the QR or type the 4-digit code on your phone.</li>
       <li>Sing — your voice comes out of this screen’s speakers, over the music. Watch the bar at the bottom for connection quality.</li>
     </ol>
     <p class="sub" style="margin-top:18px">If your voice sounds delayed, it’s almost always the Wi-Fi — move closer to the router or switch to 5&nbsp;GHz.</p>
@@ -314,6 +316,7 @@
     <div class="pcode wait" id="pairCode">– – – –</div>
     <div class="proster" id="pairRoster"></div>
     <div class="phint" id="pairHint">Starting…</div>
+    <a class="miclink" id="pairMicLink" href="/mic.html" target="_blank" rel="noopener">🎤 No app? Use this device or a laptop as a mic</a>
     <button class="close" onclick="MIC.closeModal()">Done</button>
     <button class="danger" id="pairDisconnect" style="display:none" onclick="MIC.disconnectAll()">Disconnect everyone</button>
   </div>
@@ -791,6 +794,10 @@ const MIC = (() => {
   }
   function unlockAudio(){ kickAudio(); }
   ['click','keydown','touchstart','pointerdown'].forEach(ev=>document.addEventListener(ev,kickAudio));
+  // Returning from a popup/tab-switch (e.g. the Google sign-in window) can leave
+  // audio suspended — re-kick it when the page regains focus/visibility.
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) kickAudio(); });
+  window.addEventListener('focus', kickAudio);
   // "Tap to enable sound" — browsers block audio until the screen gets a gesture.
   function soundBlocked(){
     if(ctx && ctx.state==='suspended') return true;
@@ -808,7 +815,7 @@ const MIC = (() => {
     bar.className='micbar'+(cls?(' '+cls):'');
     g('micText').innerHTML=html; g('micStat').textContent=stat||'';
     const n=Object.values(mics).filter(m=>m.live).length;
-    g('micBtn').textContent = myCode ? (n ? `Singers (${n})` : 'Add singers') : 'Pair iPhone';
+    g('micBtn').textContent = myCode ? (n ? `Singers (${n})` : 'Add singers') : 'Pair phone';
     g('micBtn').onclick = pair;
     g('micBtn').className = n ? '' : 'go';
   }
@@ -842,6 +849,7 @@ const MIC = (() => {
       g('pairCode').textContent=myCode;
       g('pairCode').classList.remove('wait');
       try{ g('pairQR').innerHTML=QR.svg(`${location.origin}/j?c=${myCode}`,200); g('pairQR').classList.add('show'); }catch(_){}
+      try{ g('pairMicLink').href = '/mic.html?c=' + myCode; }catch(_){}
       renderRoster();
     }catch(e){ g('pairHint').textContent='Relay not reachable — is the server running?'; }
   }
@@ -1033,7 +1041,8 @@ const PAY = (() => {
       })).json();
       if(!r.ok){ toast("Sign-in didn't work — try again."); return; }
       await refresh();
-      if(me.entitled){ hide(); toast("🎉 Pass restored — sing away!"); }
+      hideAuth(); hide();
+      if(me.entitled){ toast("🎉 Pass restored — sing away!"); }
       else { toast("Signed in. Grab a pass to go unlimited."); }
     }catch(_){ toast("Sign-in didn't work — try again."); }
   }

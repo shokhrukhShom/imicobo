@@ -31,6 +31,8 @@
   .qr.show{display:block}.qr svg{display:block;width:100%;height:100%}
   .or{color:var(--dim);font-size:12px;letter-spacing:2px;text-transform:uppercase;margin:14px 0 2px}
   .hint{color:var(--dim);font-size:14px;margin-top:8px}
+  .miclink{display:inline-block;margin-top:12px;color:var(--accent);font-size:14px;text-decoration:none}
+  .miclink:hover{text-decoration:underline}
 
   /* roster of connected singers */
   .roster{margin-top:18px;display:flex;flex-direction:column;gap:8px;text-align:left}
@@ -76,6 +78,7 @@
     <div class="code waiting" id="code">– – – –</div>
     <div class="roster" id="roster"></div>
     <div class="hint" id="hint">Waiting for the first singer…</div>
+    <a class="miclink" id="micLink" href="/mic.html" target="_blank" rel="noopener">🎤 No app? Use this device or a laptop as a mic</a>
     <div class="btns"><button class="cancel" onclick="newCode()">New code</button></div>
   </div>
 
@@ -169,6 +172,10 @@ function kickAudio(){
 }
 function unlockAudio(){ kickAudio(); }
 ['click','keydown','touchstart','pointerdown'].forEach(ev=>document.addEventListener(ev,kickAudio));
+// Returning from a popup/tab-switch (e.g. the Google sign-in window) can leave
+// audio suspended — re-kick it when the page regains focus/visibility.
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) kickAudio(); });
+window.addEventListener('focus', kickAudio);
 // "Tap to enable sound" — browsers block audio until the screen gets a gesture.
 function soundBlocked(){
   if(ctx && ctx.state==='suspended') return true;
@@ -191,6 +198,7 @@ async function boot(){
     $('code').textContent = myCode;
     $('code').classList.remove('waiting');
     try{ $('qr').innerHTML = QR.svg(`${location.origin}/j?c=${myCode}`,200); $('qr').classList.add('show'); }catch(_){}
+    try{ $('micLink').href = '/mic.html?c=' + myCode; }catch(_){}
     setStatus('Waiting for singers…','mid');
     poll = setInterval(tick, 900);
     statsTimer = setInterval(updateStats, 1000);
