@@ -59,22 +59,21 @@
 
   /* ===== karaoke stage ===== */
   .stage{position:relative;background:#05070a;border:1px solid var(--line);border-radius:16px;
-    height:min(66vh,540px);overflow:hidden;display:grid;place-items:center}
-  .bg-lane{position:absolute;inset:0;width:100%;height:100%;opacity:.26}
-  .karaoke{position:relative;z-index:2;text-align:center;padding:0 24px;width:100%}
-  .lyr-prev{font-size:clamp(14px,2vw,18px);color:var(--dim);opacity:.35;min-height:22px;margin-bottom:12px}
-  .lyr-cur{font-weight:800;line-height:1.18;font-size:clamp(28px,5vw,54px);text-shadow:0 4px 26px rgba(0,0,0,.75)}
-  .lyr-cur .w{color:#f3f7fb;transition:color .08s}
-  .lyr-cur .w.sung{color:var(--accent)}
-  .underline{height:4px;width:min(62%,560px);margin:18px auto 0;background:rgba(255,255,255,.12);border-radius:999px;overflow:hidden}
-  .underline i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--gold),var(--accent));transition:width .08s linear}
-  .lyr-next{font-size:clamp(15px,2.3vw,23px);color:var(--dim);margin-top:18px;min-height:26px}
+    height:min(82vh,760px);overflow:hidden;display:grid;place-items:center}
+  .bg-lane{position:absolute;inset:0;width:100%;height:100%;opacity:.20}
+  .karaoke{position:relative;z-index:2;text-align:center;padding:0 22px;width:100%;
+    display:flex;flex-direction:column;gap:clamp(10px,1.8vw,22px);align-items:center;justify-content:center}
+  .kline{font-weight:800;line-height:1.12;color:#e7eef6;text-shadow:0 4px 26px rgba(0,0,0,.8);font-size:clamp(22px,3.6vw,44px)}
+  .kline.up{opacity:.5}
+  .kline.active{font-size:clamp(34px,6.4vw,74px)}
+  .kline .w{color:#f3f7fb;transition:color .08s}
+  .kline .w.sung{color:var(--accent)}
   .scoreBadge{position:absolute;top:12px;right:16px;z-index:3;text-align:right}
   .scoreBadge .n{font:800 24px var(--mono);color:var(--gold);text-shadow:0 2px 10px #000}
   .scoreBadge .c{font-size:13px;color:var(--accent);font-weight:700;min-height:16px}
-  .countdown{position:absolute;inset:0;display:none;place-items:center;z-index:5;
-    font:900 120px var(--mono);color:var(--accent);text-shadow:0 8px 40px rgba(0,0,0,.7)}
-  .countdown.show{display:grid}
+  .countdown{position:absolute;top:13%;left:0;right:0;text-align:center;display:none;z-index:6;
+    font:900 clamp(60px,11vw,120px) var(--mono);color:var(--accent);text-shadow:0 8px 40px rgba(0,0,0,.75)}
+  .countdown.show{display:block}
   .float{position:absolute;z-index:4;pointer-events:none;font-size:30px;animation:fl 1.5s ease-out forwards}
   @keyframes fl{0%{transform:translateY(0) scale(.5);opacity:0}15%{opacity:1}100%{transform:translateY(-170px) scale(1.25);opacity:0}}
 
@@ -148,12 +147,7 @@
     <div class="stage" id="stage">
       <canvas class="bg-lane" id="lane"></canvas>
       <div class="scoreBadge"><div class="n" id="scoreVal">0</div><div class="c" id="combo"></div></div>
-      <div class="karaoke">
-        <div class="lyr-prev" id="lyrPrev">&nbsp;</div>
-        <div class="lyr-cur" id="lyrCur">&nbsp;</div>
-        <div class="underline"><i id="lyrBar"></i></div>
-        <div class="lyr-next" id="lyrNext">&nbsp;</div>
-      </div>
+      <div class="karaoke" id="karaoke"></div>
       <div class="countdown" id="countdown"></div>
 
       <div class="resultOverlay hidden" id="resultOverlay">
@@ -266,7 +260,7 @@ function stopPreview(){ if(preview){ try{preview.pause()}catch(_){}} preview=nul
 function togglePreview(s,btn){ if(previewId===s.id) stopPreview(); else { startPreview(s,btn,.7); if(btn) btn.dataset.pin='1'; } }
 
 /* ============================ SONG / PLAYER ============================ */
-let pitchData={notes:[],offset:0}, lrcWords=[];
+let pitchData={notes:[],offset:0}, lrcWords=[], cues=[];
 let instrAudio=null, origAudio=null, referenceMode=false, playing=false, finished=false, started=false;
 
 async function openSong(s){
@@ -326,7 +320,12 @@ function buildWordTiming(all){ lrcWords=[];
   for(let i=0;i<all.length;i++){ if(!all[i].text) continue;      // blank marker = line end only
     const start=all[i].t, end=(i+1<all.length?all[i+1].t:start+4);  // next timestamp (blank or next line)
     const words=all[i].text.split(/\s+/).filter(Boolean), span=Math.max(0.3,end-start);
-    lrcWords.push({start,end,text:all[i].text,words:words.map((w,k)=>({w,t:start+(k/words.length)*span}))}); } }
+    lrcWords.push({start,end,text:all[i].text,words:words.map((w,k)=>({w,t:start+(k/words.length)*span}))}); }
+  // 3-2-1 countdown cues: before the first line if the intro is long (>=8s),
+  // and before any line that follows a long instrumental gap (>=6s).
+  cues=[];
+  for(let i=0;i<lrcWords.length;i++){ const prevEnd=i>0?lrcWords[i-1].end:0, gap=lrcWords[i].start-prevEnd;
+    if((i===0 && lrcWords[i].start>=8) || (i>0 && gap>=6)) cues.push(lrcWords[i].start); } }
 
 /* ============================ SCORING ============================ */
 const TOL=3.0, SMOOTH=5, NEED=0.55; let LAT=0.12;
@@ -337,22 +336,19 @@ function resetGameState(){
   pitchHist=[]; trail=[]; prevActive=null; pitchData.notes.forEach(n=>n.hit=0);
   $('scoreVal').textContent='0'; $('combo').textContent=''; $('refNote').textContent='';
   $('refBtn').classList.remove('on'); $('refBtn').textContent='🎧 Hear original';
-  $('playBtn').textContent='▶'; $('seek').value=0; $('lyrBar').style.width='0%'; updateTime();
+  $('playBtn').textContent='▶'; $('seek').value=0;
+  const K=$('karaoke'); if(K) K.innerHTML=''; $('countdown').classList.remove('show'); updateTime();
   try{ instrAudio.currentTime=0; origAudio.currentTime=0; }catch(_){}
 }
 function songTime(){ const a=referenceMode?origAudio:instrAudio; return a?a.currentTime:0; }
 
 function togglePlay(){ if(!song) return; kickAudio();
-  if(playing){ pausePlay(); return; } if(finished){ restartSong(); return; }
-  if(!started&&songTime()<0.3){ countIn(startPlay); } else startPlay(); }
+  if(playing){ pausePlay(); return; } if(finished){ restartSong(); return; } startPlay(); }
 function startPlay(){ started=true; finished=false; referenceMode=false; $('resultOverlay').classList.add('hidden');
   instrAudio.play().catch(()=>{}); playing=true; $('playBtn').textContent='⏸'; lastT=performance.now()/1000; loop(); }
 function pausePlay(){ playing=false; $('playBtn').textContent='▶';
   try{ instrAudio.pause(); origAudio.pause(); }catch(_){} cancelAnimationFrame(rafId); rafId=null; }
 function restartSong(){ pausePlay(); resetGameState(); drawLane(0); togglePlay(); }
-function countIn(done){ const el=$('countdown'); let n=3; el.classList.add('show'); el.textContent=n;
-  const iv=setInterval(()=>{ n--; if(n>0) el.textContent=n; else { clearInterval(iv); el.textContent='SING!';
-    setTimeout(()=>{ el.classList.remove('show'); done(); },450); } },700); }
 
 function skip(d){ const t=Math.max(0,Math.min((instrAudio.duration||1e9),songTime()+d));
   instrAudio.currentTime=t; origAudio.currentTime=t; trail=[]; updateTime(); drawLane(t-pitchData.offset-LAT); }
@@ -404,7 +400,7 @@ function loop(){
   // trail
   if(sMidi!=null){ const good=active&&semitoneDiff(sMidi,active.midi)<=TOL; trail.push({t,midi:foldToLane(sMidi),good}); }
   while(trail.length&&trail[0].t<t-2) trail.shift();
-  updateLyrics(t); updateTime(); drawLane(t);
+  updateCue(t); updateLyrics(t); updateTime(); drawLane(t);
 }
 function semitoneDiff(a,b){ let d=Math.abs(a-b)%12; return Math.min(d,12-d); }
 function updateTime(){ const cur=songTime(), dur=instrAudio?instrAudio.duration||0:0;
@@ -412,15 +408,31 @@ function updateTime(){ const cur=songTime(), dur=instrAudio?instrAudio.duration|
 let dragging=false; $('seek').addEventListener('pointerdown',()=>dragging=true); $('seek').addEventListener('pointerup',()=>dragging=false);
 function fmt(s){ s=Math.max(0,s|0); return (s/60|0)+':'+String(s%60).padStart(2,'0'); }
 
+const LEAD_SHOW=6, MAX_LINES=4;   // show upcoming lines up to 6s early, up to 4 at once
 function updateLyrics(t){
-  if(!lrcWords.length) return;
-  let idx=-1; for(let i=0;i<lrcWords.length;i++){ if(lrcWords[i].start<=t) idx=i; else break; }
-  const cur=idx>=0?lrcWords[idx]:null, nxt=idx+1<lrcWords.length?lrcWords[idx+1]:null, prv=idx>0?lrcWords[idx-1]:null;
-  $('lyrPrev').textContent=prv?prv.text:'';
-  if(cur){ $('lyrCur').innerHTML=cur.words.map(w=>`<span class="w${t>=w.t?' sung':''}">${esc(w.w)}</span>`).join(' ');
-    const frac=Math.max(0,Math.min(1,(t-cur.start)/Math.max(.3,cur.end-cur.start))); $('lyrBar').style.width=(frac*100)+'%'; }
-  else { $('lyrCur').innerHTML='♪'; $('lyrBar').style.width='0%'; }
-  $('lyrNext').textContent=nxt?nxt.text:'';
+  const K=$('karaoke'); if(!K) return;
+  if(!lrcWords.length){ K.innerHTML=''; return; }
+  const fi=lrcWords.findIndex(l=>l.end>t);          // current or next line
+  if(fi<0){ K.innerHTML=''; return; }               // song's lyrics are done
+  const win=[];
+  for(let i=fi;i<lrcWords.length && win.length<MAX_LINES;i++){
+    const l=lrcWords[i];
+    if(win.length>0 && l.start>t+LEAD_SHOW) break;   // stop before far-future lines
+    win.push(l);
+  }
+  // deep in a gap: first upcoming line is still far away → clear the screen
+  if(win.length && win[0].start>t+LEAD_SHOW){ K.innerHTML=''; return; }
+  K.innerHTML = win.map(l=>{
+    if(l.start<=t) return `<div class="kline active">`+
+      l.words.map(w=>`<span class="w${t>=w.t?' sung':''}">${esc(w.w)}</span>`).join(' ')+`</div>`;
+    return `<div class="kline up">${esc(l.text)}</div>`;
+  }).join('');
+}
+function updateCue(t){
+  let num=0;
+  if(playing && !referenceMode){ for(const c of cues){ if(t>=c-3 && t<c){ num=Math.ceil(c-t); break; } } }
+  const el=$('countdown'); if(!el) return;
+  if(num>0){ el.textContent=num; el.classList.add('show'); } else el.classList.remove('show');
 }
 
 function onSongEnded(){ if(!referenceMode) finishSong(); }
