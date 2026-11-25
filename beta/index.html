@@ -16,19 +16,24 @@
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
   body{background:var(--bg);color:var(--ink);
-    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-tap-highlight-color:transparent}
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-tap-highlight-color:transparent;
+    display:flex;flex-direction:column}
   .beta-tag{display:inline-block;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;
     color:#06231f;background:var(--accent);border-radius:999px;padding:2px 9px;font-weight:800;vertical-align:middle}
   button{font:inherit;cursor:pointer;border:none}
   .hidden{display:none !important}
 
   header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);
-    position:sticky;top:0;background:rgba(10,12,16,.9);backdrop-filter:blur(8px);z-index:50}
+    flex:0 0 auto;background:rgba(10,12,16,.9);backdrop-filter:blur(8px);z-index:50}
   header .back{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:8px 12px;font-size:14px}
   header h1{font-size:18px;font-weight:700;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   header .brand{font-size:13px;letter-spacing:2px;text-transform:uppercase;color:var(--dim)}
 
-  .wrap{max-width:1000px;margin:0 auto;padding:18px 16px 50px}
+  .wrap{max-width:1400px;width:100%;margin:0 auto;padding:12px 16px 14px;
+    flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow-y:auto}
+  /* player fills the space below the header so nothing needs page scrolling */
+  #playerPanel{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;gap:10px}
+  .transport,.row2,.refnote,.micwarn{flex:0 0 auto}
 
   .chip{display:inline-flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:14px}
   .chip .d{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 9px var(--ok)}
@@ -59,14 +64,16 @@
 
   /* ===== karaoke stage ===== */
   .stage{position:relative;background:#05070a;border:1px solid var(--line);border-radius:16px;
-    height:min(82vh,760px);overflow:hidden;display:grid;place-items:center}
+    flex:1 1 auto;min-height:240px;overflow:hidden;display:grid;place-items:center}
   .bg-lane{position:absolute;inset:0;width:100%;height:100%;opacity:.20}
   .karaoke{position:relative;z-index:2;text-align:center;padding:0 22px;width:100%;
     display:flex;flex-direction:column;gap:clamp(10px,1.8vw,22px);align-items:center;justify-content:center}
-  .kline{font-weight:800;line-height:1.12;color:#e7eef6;text-shadow:0 4px 26px rgba(0,0,0,.8);font-size:clamp(22px,3.6vw,44px)}
+  /* every line the same size — the active one stands out by color, not size */
+  .kline{font-weight:800;line-height:1.14;color:#e7eef6;text-shadow:0 4px 26px rgba(0,0,0,.8);font-size:clamp(24px,3.6vw,46px)}
   .kline.up{opacity:.5}
-  .kline.active{font-size:clamp(34px,6.4vw,74px)}
+  .kline.done{opacity:.7}
   .kline .w{color:#f3f7fb;transition:color .08s}
+  .kline.done .w{color:var(--accent)}
   .kline .w.sung{color:var(--accent)}
   .scoreBadge{position:absolute;top:12px;right:16px;z-index:3;text-align:right}
   .scoreBadge .n{font:800 24px var(--mono);color:var(--gold);text-shadow:0 2px 10px #000}
@@ -408,23 +415,19 @@ function updateTime(){ const cur=songTime(), dur=instrAudio?instrAudio.duration|
 let dragging=false; $('seek').addEventListener('pointerdown',()=>dragging=true); $('seek').addEventListener('pointerup',()=>dragging=false);
 function fmt(s){ s=Math.max(0,s|0); return (s/60|0)+':'+String(s%60).padStart(2,'0'); }
 
-const LEAD_SHOW=6, MAX_LINES=4;   // show upcoming lines up to 6s early, up to 4 at once
+const BATCH=4, LEAD_SHOW=8;   // show 4 lines at a time; a batch appears up to 8s early
 function updateLyrics(t){
   const K=$('karaoke'); if(!K) return;
   if(!lrcWords.length){ K.innerHTML=''; return; }
-  const fi=lrcWords.findIndex(l=>l.end>t);          // current or next line
-  if(fi<0){ K.innerHTML=''; return; }               // song's lyrics are done
-  const win=[];
-  for(let i=fi;i<lrcWords.length && win.length<MAX_LINES;i++){
-    const l=lrcWords[i];
-    if(win.length>0 && l.start>t+LEAD_SHOW) break;   // stop before far-future lines
-    win.push(l);
-  }
-  // deep in a gap: first upcoming line is still far away → clear the screen
-  if(win.length && win[0].start>t+LEAD_SHOW){ K.innerHTML=''; return; }
-  K.innerHTML = win.map(l=>{
-    if(l.start<=t) return `<div class="kline active">`+
-      l.words.map(w=>`<span class="w${t>=w.t?' sung':''}">${esc(w.w)}</span>`).join(' ')+`</div>`;
+  const idx=lrcWords.findIndex(l=>l.end>t);          // current or next line
+  if(idx<0){ K.innerHTML=''; return; }               // lyrics finished
+  const bStart=Math.floor(idx/BATCH)*BATCH;          // which batch of 4 we're on
+  const batch=lrcWords.slice(bStart,bStart+BATCH);
+  // deep in an instrumental gap: this batch is still far off → keep the screen clear
+  if(batch[0].start>t+LEAD_SHOW){ K.innerHTML=''; return; }
+  K.innerHTML=batch.map(l=>{
+    if(l.end<=t) return `<div class="kline done">${l.words.map(w=>`<span class="w sung">${esc(w.w)}</span>`).join(' ')}</div>`;
+    if(l.start<=t) return `<div class="kline active">${l.words.map(w=>`<span class="w${t>=w.t?' sung':''}">${esc(w.w)}</span>`).join(' ')}</div>`;
     return `<div class="kline up">${esc(l.text)}</div>`;
   }).join('');
 }
