@@ -55,8 +55,8 @@
   .empty{background:var(--panel);border:1px dashed var(--line);border-radius:16px;padding:36px 22px;text-align:center;color:var(--dim)}
 
   /* ===== stage ===== */
-  .stage{--pitchH:clamp(120px,19vh,180px);position:relative;background:#05070a;border:1px solid var(--line);
-    border-radius:16px;flex:1 1 auto;min-height:260px;overflow:hidden}
+  .stage{--pitchH:clamp(210px,40vh,400px);position:relative;background:#05070a;border:1px solid var(--line);
+    border-radius:16px;flex:1 1 auto;min-height:300px;overflow:hidden}
   .stage:fullscreen{border-radius:0;border:none}
   .bg-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
   .bg-dim{position:absolute;inset:0;z-index:1;background:linear-gradient(180deg,rgba(0,0,0,.5),rgba(0,0,0,.2) 38%,rgba(0,0,0,.72))}
@@ -66,16 +66,21 @@
   .kline.up{opacity:.5}.kline.done{opacity:.7}
   .kline .w{color:#f3f7fb;transition:color .08s}.kline.done .w{color:var(--accent)}.kline .w.sung{color:var(--accent)}
   .pitch{position:absolute;left:0;right:0;bottom:0;height:var(--pitchH);z-index:2}
-  .scoreBadge{position:absolute;top:12px;right:16px;z-index:5;text-align:right}
-  .scoreBadge .n{font:800 26px var(--mono);color:var(--gold);text-shadow:0 2px 10px #000}
-  .scoreBadge .c{font-size:13px;color:var(--accent);font-weight:700;min-height:16px;text-shadow:0 2px 8px #000}
+  .scoreBadge{position:absolute;top:14px;right:20px;z-index:5;text-align:right;opacity:.5}
+  .scoreBadge .n{font:800 clamp(44px,6.5vw,80px) var(--mono);color:var(--gold);text-shadow:0 3px 18px #000;line-height:1}
+  .scoreBadge .c{font-size:clamp(14px,1.9vw,24px);color:var(--accent);font-weight:800;min-height:18px;text-shadow:0 2px 10px #000}
+  .loading{position:absolute;inset:0;z-index:30;display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:rgba(5,7,10,.93)}
+  .loading.show{display:flex}
+  .spinner{width:56px;height:56px;border-radius:50%;border:4px solid rgba(255,255,255,.14);border-top-color:var(--accent);animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loading .lt{color:var(--dim);font-size:15px}
   .countdown{position:absolute;top:12%;left:0;right:0;text-align:center;display:none;z-index:6;
     font:900 clamp(60px,11vw,120px) var(--mono);color:var(--accent);text-shadow:0 8px 40px rgba(0,0,0,.85)}
   .countdown.show{display:block}
   .micwarn{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:8;color:#2a1a00;background:var(--warn);
     padding:7px 14px;border-radius:999px;font-size:13px;font-weight:700}
-  .float{position:absolute;z-index:4;pointer-events:none;font-size:30px;animation:fl 1.5s ease-out forwards}
-  @keyframes fl{0%{transform:translateY(0) scale(.5);opacity:0}15%{opacity:1}100%{transform:translateY(-170px) scale(1.25);opacity:0}}
+  .float{position:absolute;z-index:4;pointer-events:none;font-size:clamp(42px,6.5vw,84px);animation:fl 1.8s ease-out forwards}
+  @keyframes fl{0%{transform:translateY(0) scale(.5);opacity:0}15%{opacity:.72}100%{transform:translateY(-220px) scale(1.45);opacity:0}}
 
   /* auto-hiding controls overlay */
   .controls{position:absolute;left:0;right:0;bottom:0;z-index:9;padding:16px 16px 12px;
@@ -148,6 +153,7 @@
       <div class="karaoke" id="karaoke"></div>
       <canvas class="pitch" id="lane"></canvas>
       <div class="countdown" id="countdown"></div>
+      <div class="loading" id="loading"><div class="spinner"></div><div class="lt">Loading song…</div></div>
 
       <div class="controls" id="controls">
         <div class="crow">
@@ -258,10 +264,16 @@ function togglePreview(s,btn){ if(previewId===s.id) stopPreview(); else { startP
 let pitchData={notes:[],offset:0}, lrcWords=[], cues=[];
 let instrAudio=null, origAudio=null, referenceMode=false, playing=false, finished=false, started=false;
 
+function whenReady(a){ return new Promise(res=>{ if(a.readyState>=3) return res();
+  const d=()=>{ a.removeEventListener('canplaythrough',d); a.removeEventListener('loadeddata',d); res(); };
+  a.addEventListener('canplaythrough',d); a.addEventListener('loadeddata',d); }); }
+function wait(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
 async function openSong(s){
   stopPreview(); song=s;
   $('libraryPanel').classList.add('hidden'); $('playerPanel').classList.remove('hidden');
   $('backBtn').classList.remove('hidden'); $('hdr').textContent=s.title; $('resultOverlay').classList.add('hidden');
+  $('loading').classList.add('show');                       // loading popup while everything loads
   try{ $('bgVid').play().catch(()=>{}); }catch(_){}
   instrAudio=new Audio(s.instrument); origAudio=new Audio(s.original); instrAudio.preload=origAudio.preload='auto';
   instrAudio.addEventListener('ended',onSongEnded);
@@ -271,10 +283,15 @@ async function openSong(s){
     const [pj,lt]=await Promise.all([ fetch(s.pitch+bust,{cache:'no-store'}).then(r=>r.json()), fetch(s.lyrics+bust,{cache:'no-store'}).then(r=>r.text()) ]);
     pitchData=normalizePitch(pj); buildWordTiming(parseLRC(lt));
   }catch(e){ pitchData={notes:[],offset:0}; lrcWords=[]; cues=[]; }
-  computeLaneRange(); resetGameState(); showControls();
+  computeLaneRange(); resetGameState();
   requestAnimationFrame(()=>{ fitLane(); drawLane(0); });
+  // wait for both audio tracks to be playable (timeout so a slow/missing file never hangs)
+  await Promise.race([ Promise.all([whenReady(instrAudio),whenReady(origAudio)]), wait(6000) ]);
+  if(song!==s) return;                                       // user navigated away while loading
+  $('loading').classList.remove('show');
+  showControls(); startPlay();                               // auto-play once loaded
 }
-function goBack(){ stopAll(); if(document.fullscreenElement) document.exitFullscreen().catch(()=>{}); if(!everConnected) return;
+function goBack(){ stopAll(); $('loading').classList.remove('show'); if(document.fullscreenElement) document.exitFullscreen().catch(()=>{}); if(!everConnected) return;
   $('playerPanel').classList.add('hidden'); $('pairPanel').classList.add('hidden'); $('libraryPanel').classList.remove('hidden');
   $('hdr').innerHTML='iMicobo Sing <span class="beta-tag">beta</span>'; $('backBtn').classList.add('hidden'); }
 
@@ -328,8 +345,8 @@ function songTime(){ const a=referenceMode?origAudio:instrAudio; return a?a.curr
 function togglePlay(){ if(!song) return; kickAudio();
   if(playing){ pausePlay(); return; } if(finished){ restartSong(); return; } startPlay(); }
 function startPlay(){ started=true; finished=false; referenceMode=false; $('resultOverlay').classList.add('hidden');
-  try{ $('bgVid').play().catch(()=>{}); }catch(_){} instrAudio.play().catch(()=>{}); playing=true; $('playBtn').textContent='⏸';
-  lastT=performance.now()/1000; showControls(); loop(); }
+  try{ $('bgVid').play().catch(()=>{}); }catch(_){} instrAudio.play().catch(refreshSoundGate); playing=true; $('playBtn').textContent='⏸';
+  lastT=performance.now()/1000; showControls(); setTimeout(refreshSoundGate,250); loop(); }
 function pausePlay(){ playing=false; $('playBtn').textContent='▶';
   try{ instrAudio.pause(); origAudio.pause(); }catch(_){} cancelAnimationFrame(rafId); rafId=null; showControls(); }
 function restartSong(){ pausePlay(); resetGameState(); drawLane(0); togglePlay(); }
@@ -363,7 +380,9 @@ function loop(){
   for(let i=0;i<ns.length;i++){ const n=ns[i]; if(t>=n.t&&t<n.t+n.dur){ active=n; break; } if(n.t>t) break; }
   if(!referenceMode&&playing&&micLive&&active&&sMidi!=null&&t>=active.t+0.08){
     const q=Math.max(0,1-semitoneDiff(sMidi,active.midi)/TOL);
-    if(q>0){ active.hit=Math.min(active.dur,active.hit+q*dt); score+=q*120*dt; combo+=(q>0.5?1:0); bestCombo=Math.max(bestCombo,combo); } else combo=0;
+    if(q>0){ active.hit=Math.min(active.dur,active.hit+q*dt); score+=q*120*dt; combo+=(q>0.5?1:0); bestCombo=Math.max(bestCombo,combo);
+      if(q>0.5) floatEmoji(); }           // keep the celebration going while on pitch
+    else combo=0;
     $('scoreVal').textContent=Math.round(score).toLocaleString(); $('combo').textContent=combo>6?`🔥 ${combo}`:'';
   }
   if(active!==prevActive){ if(prevActive&&prevActive.dur>0&&prevActive.hit/(prevActive.dur*NEED)>=1) floatEmoji(); prevActive=active; }
@@ -430,7 +449,7 @@ function drawLane(t){
   const act=activeNoteAt(t), good=curPitchMidi!=null&&act&&semitoneDiff(curPitchMidi,act.midi)<=TOL;
   for(const n of pitchData.notes){
     const x1=xOf(n.t),x2=xOf(n.t+n.dur); if(x2<-20||x1>W+20) continue;
-    const y=yOf(clampLane(n.midi)),h=14,f=(clampLane(n.midi)-laneLo)/(laneHi-laneLo),bw=Math.max(3,x2-x1);
+    const y=yOf(clampLane(n.midi)),h=18,f=(clampLane(n.midi)-laneLo)/(laneHi-laneLo),bw=Math.max(3,x2-x1);
     const ratio=n.dur>0?Math.min(1,n.hit/(n.dur*NEED)):0;
     g.shadowColor=pitchColor(n.midi,1); g.shadowBlur=5+f*18;            // high notes glow red
     g.fillStyle=pitchColor(n.midi,.9); rr(g,x1,y-h/2,bw,h,6); g.fill(); g.shadowBlur=0;
@@ -439,7 +458,7 @@ function drawLane(t){
       grd.addColorStop(0,'rgba(35,18,8,.96)'); grd.addColorStop(.65,'rgba(130,55,20,.92)'); grd.addColorStop(1,'rgba(255,175,45,1)');
       g.fillStyle=grd; rr(g,x1,y-h/2,hw,h,6); g.fill();
       g.shadowColor='#ff8a1f'; g.shadowBlur=20; g.fillStyle='rgba(255,220,140,.95)'; g.fillRect(x1+hw-2,y-h/2,3,h); g.shadowBlur=0;
-      if(playing&&good&&n===act){ for(let k=0;k<2;k++) embers.push({x:x1+hw,y:y+(Math.random()-.5)*h,vx:(Math.random()-.3)*1.6,vy:-Math.random()*2-0.6,r:Math.random()*2+1.3,c:['#ffb02e','#ffd98a','#ff5a2a'][k%3],life:1}); }
+      if(playing&&good&&n===act){ for(let k=0;k<4;k++) embers.push({x:x1+hw,y:y+(Math.random()-.5)*h,vx:(Math.random()-.3)*2,vy:-Math.random()*2.6-0.8,r:Math.random()*3+1.8,c:['#ffb02e','#ffd98a','#ff5a2a','#fff0b0'][k%4],life:1}); }
     }
   }
   g.strokeStyle='rgba(255,255,255,.5)'; g.lineWidth=2; g.beginPath(); g.moveTo(nowX,0); g.lineTo(nowX,H); g.stroke();
@@ -455,10 +474,11 @@ function rr(g,x,y,w,h,r){ r=Math.min(r,h/2,w/2); g.beginPath(); g.moveTo(x+r,y);
 
 /* ============================ EFFECTS ============================ */
 let lastFloat=0;
-function floatEmoji(){ const now=performance.now(); if(now-lastFloat<220) return; lastFloat=now;
-  const stage=$('stage'); if(!stage) return; const chars=['❤️','👍','✨','🎉','🥂','🔥','⭐','💖'];
-  const s=document.createElement('div'); s.className='float'; s.textContent=chars[Math.random()*chars.length|0];
-  s.style.left=(28+Math.random()*44)+'%'; s.style.bottom='calc(var(--pitchH) + 8%)'; stage.appendChild(s); setTimeout(()=>s.remove(),1550); }
+const FLOAT_CHARS=['🔥','❤️','👍','✨','🎉','🥳','⭐','💖','🙌','😍'];
+function floatEmoji(){ const now=performance.now(); if(now-lastFloat<190) return; lastFloat=now;
+  const stage=$('stage'); if(!stage) return;
+  const s=document.createElement('div'); s.className='float'; s.textContent=FLOAT_CHARS[Math.random()*FLOAT_CHARS.length|0];
+  s.style.left=(14+Math.random()*70)+'%'; s.style.bottom=(24+Math.random()*34)+'%'; stage.appendChild(s); setTimeout(()=>s.remove(),1850); }
 function burst(){ const n=120,parts=[],cv=document.createElement('canvas');
   cv.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:600'; cv.width=innerWidth; cv.height=innerHeight; document.body.appendChild(cv);
   const g=cv.getContext('2d'), cols=['#5eead4','#22d3ee','#fcd34d','#4ade80','#f87171','#f0abfc'];
@@ -477,6 +497,12 @@ function showControls(){ const c=$('controls'); if(!c) return; c.classList.add('
   clearTimeout(ctlTimer); if(playing){ ctlTimer=setTimeout(()=>{ c.classList.remove('show'); if(playing) $('stage').style.cursor='none'; },2600); } }
 $('stage').addEventListener('mousemove',showControls);
 $('stage').addEventListener('pointerdown',showControls);
+/* click the stage (not the controls) = play/pause, same as Space */
+$('stage').addEventListener('click',e=>{
+  if(e.target.closest('#controls')||e.target.closest('.resultOverlay')||e.target.closest('.loading')) return;
+  if(!song||$('playerPanel').classList.contains('hidden')) return;
+  togglePlay();
+});
 
 /* ============================ MIC AUDIO ============================ */
 let actx=null, micSrc=null, micEl=null, analyser=null, pitchBuf=null;
@@ -503,8 +529,8 @@ const hzToMidi=hz=>69+12*Math.log2(hz/440);
 
 function kickAudio(){ if(actx&&actx.state!=='running') actx.resume().catch(()=>{}); if(micEl&&micEl.paused) micEl.play().catch(()=>{});
   try{ $('bgVid').play().catch(()=>{}); }catch(_){} [instrAudio,origAudio].forEach(a=>{ if(a&&!a.paused) a.play().catch(()=>{}); }); setTimeout(refreshSoundGate,150); }
-function soundBlocked(){ return (actx&&actx.state==='suspended')||(micEl&&micEl.paused); }
-function refreshSoundGate(){ const g=$('soundGate'); if(g) g.classList.toggle('show',micLive&&soundBlocked()); }
+function soundBlocked(){ return (actx&&actx.state==='suspended')||(micEl&&micEl.paused)||(playing&&instrAudio&&instrAudio.paused&&!referenceMode); }
+function refreshSoundGate(){ const g=$('soundGate'); if(g) g.classList.toggle('show',soundBlocked()); }
 ['click','touchstart','keydown','pointerdown'].forEach(ev=>document.addEventListener(ev,kickAudio,{passive:true}));
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden) kickAudio(); });
 addEventListener('keydown',e=>{ if(e.code==='Space'&&song&&!$('playerPanel').classList.contains('hidden')){ e.preventDefault(); togglePlay(); }
