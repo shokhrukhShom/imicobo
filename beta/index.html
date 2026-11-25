@@ -65,7 +65,7 @@
   .kline{font-weight:800;line-height:1.14;color:#e7eef6;text-shadow:0 3px 22px rgba(0,0,0,.95);font-size:clamp(24px,3.6vw,46px)}
   .kline.up{opacity:.5}.kline.done{opacity:.7}
   .kline .w{color:#f3f7fb;transition:color .08s}.kline.done .w{color:var(--accent)}.kline .w.sung{color:var(--accent)}
-  .pitch{position:absolute;left:0;right:0;bottom:0;height:var(--pitchH);z-index:2}
+  .pitch{position:absolute;left:50%;transform:translateX(-50%);bottom:0;width:min(74%,1000px);height:var(--pitchH);z-index:2}
   .scoreBadge{position:absolute;top:14px;right:20px;z-index:5;text-align:right;opacity:.5}
   .scoreBadge .n{font:800 clamp(44px,6.5vw,80px) var(--mono);color:var(--gold);text-shadow:0 3px 18px #000;line-height:1}
   .scoreBadge .c{font-size:clamp(14px,1.9vw,24px);color:var(--accent);font-weight:800;min-height:18px;text-shadow:0 2px 10px #000}
@@ -497,12 +497,16 @@ function showControls(){ const c=$('controls'); if(!c) return; c.classList.add('
   clearTimeout(ctlTimer); if(playing){ ctlTimer=setTimeout(()=>{ c.classList.remove('show'); if(playing) $('stage').style.cursor='none'; },2600); } }
 $('stage').addEventListener('mousemove',showControls);
 $('stage').addEventListener('pointerdown',showControls);
-/* click the stage (not the controls) = play/pause, same as Space */
-$('stage').addEventListener('click',e=>{
-  if(e.target.closest('#controls')||e.target.closest('.resultOverlay')||e.target.closest('.loading')) return;
-  if(!song||$('playerPanel').classList.contains('hidden')) return;
-  togglePlay();
-});
+/* single click = play/pause (same as Space) · double click = fullscreen.
+   A short delay lets a double-click cancel the single-click so it doesn't do both. */
+let clickTimer=null;
+function stageHit(e){ return !(e.target.closest('#controls')||e.target.closest('.resultOverlay')||e.target.closest('.loading'))
+  && song && !$('playerPanel').classList.contains('hidden'); }
+$('stage').addEventListener('click',e=>{ if(!stageHit(e)) return;
+  if(clickTimer) return;                      // second click of a dbl — let dblclick handle it
+  clickTimer=setTimeout(()=>{ clickTimer=null; togglePlay(); }, 230); });
+$('stage').addEventListener('dblclick',e=>{ if(!stageHit(e)) return;
+  if(clickTimer){ clearTimeout(clickTimer); clickTimer=null; } toggleFS(); });
 
 /* ============================ MIC AUDIO ============================ */
 let actx=null, micSrc=null, micEl=null, analyser=null, pitchBuf=null;
