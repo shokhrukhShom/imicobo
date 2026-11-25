@@ -446,23 +446,38 @@ function updateMicWarn(){ $('micWarn').classList.toggle('hidden', micLive); }
 /* ======================================================================
    AUDIO IN (singer) → pitch detection
    ====================================================================== */
-let actx = null, micSrc = null, micGain = null, analyser = null, pitchBuf = null;
+let actx = null, micSrc = null, micEl = null, analyser = null, pitchBuf = null;
 let curPitchMidi = null, curClarity = 0;
 
 function attachSinger(stream, name){
   micStream = stream;
   renderSinger(name, true);
+  // 1) PLAY the voice through a plain <audio> element. This is what makes sound
+  //    come out — and on Chrome a remote WebRTC stream is silent in Web Audio
+  //    UNLESS it's also attached to a media element like this.
+  try{
+    if(micEl){ micEl.srcObject = null; micEl.remove(); }
+    micEl = document.createElement('audio');
+    micEl.autoplay = true; micEl.playsInline = true; micEl.style.display = 'none';
+    document.body.appendChild(micEl);
+    micEl.srcObject = stream;
+    micEl.volume = +$('micVol').value;
+    const tryPlay = () => micEl.play().then(refreshSoundGate).catch(refreshSoundGate);
+    tryPlay();
+    micEl.addEventListener('canplay', tryPlay);
+    const tr = stream.getAudioTracks && stream.getAudioTracks()[0];
+    if(tr) tr.addEventListener('unmute', tryPlay);
+  }catch(e){}
+  // 2) ANALYSER for pitch detection (the element above keeps it fed on Chrome).
+  //    The analyser is a read-only tap — not connected to the speakers, so the
+  //    voice isn't played twice.
   try{
     if(!actx) actx = new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
     micSrc = actx.createMediaStreamSource(stream);
-    micGain = actx.createGain(); micGain.gain.value = +$('micVol').value;
     analyser = actx.createAnalyser();
     analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0;
     pitchBuf = new Float32Array(analyser.fftSize);
-    // tap for pitch + play the voice out of the speakers so the room hears it
     micSrc.connect(analyser);
-    micSrc.connect(micGain); micGain.connect(actx.destination);
-    // keep latency low
     try{ const r = micPc.getReceivers().find(x=>x.track&&x.track.kind==='audio');
          if(r){ if('jitterBufferTarget' in r) r.jitterBufferTarget=0;
                 if('playoutDelayHint' in r) r.playoutDelayHint=0; } }catch(_){}
@@ -470,10 +485,16 @@ function attachSinger(stream, name){
   kickAudio();
 }
 function teardownPitch(){
-  try{ micSrc && micSrc.disconnect(); micGain && micGain.disconnect(); analyser && analyser.disconnect(); }catch(_){}
-  micSrc = micGain = analyser = pitchBuf = null; curPitchMidi = null; curClarity = 0;
+  try{ micSrc && micSrc.disconnect(); analyser && analyser.disconnect(); }catch(_){}
+  if(micEl){ try{ micEl.srcObject = null; micEl.remove(); }catch(_){} micEl = null; }
+  micSrc = analyser = pitchBuf = null; curPitchMidi = null; curClarity = 0;
 }
-$('micVol').addEventListener('input', e => { if(micGain) micGain.gain.value = +e.target.value; });
+$('micVol').addEventListener('input', e => { if(micEl) micEl.volume = +e.target.value; });
+function soundBlocked(){ return (actx && actx.state==='suspended') || (micEl && micEl.paused); }
+function refreshSoundGate(){
+  const g = $('soundGate'); if(!g) return;
+  g.classList.toggle('show', micLive && soundBlocked());
+}
 
 /* autocorrelation pitch detector — returns frequency in Hz, or -1 */
 function detectPitch(buf, rate){
@@ -747,8 +768,9 @@ function burst(){
    ====================================================================== */
 function kickAudio(){
   if(actx && actx.state!=='running') actx.resume().catch(()=>{});
+  if(micEl && micEl.paused) micEl.play().catch(()=>{});     // start the singer's voice
   [instrAudio, origAudio].forEach(a=>{ if(a && !a.paused) a.play().catch(()=>{}); });
-  setTimeout(()=>{ const sb=$('soundGate'); if(sb) sb.classList.remove('show'); }, 150);
+  setTimeout(refreshSoundGate, 150);
 }
 ['click','touchstart','keydown','pointerdown'].forEach(ev=>document.addEventListener(ev, kickAudio, {passive:true}));
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) kickAudio(); });
