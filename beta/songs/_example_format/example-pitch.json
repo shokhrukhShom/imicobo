@@ -1,0 +1,11 @@
+{
+  "song": "Example — delete this folder",
+  "offset": 0.0,
+  "notes": [
+    { "t": 0.00, "dur": 0.50, "midi": 60, "lyric": "do" },
+    { "t": 0.50, "dur": 0.50, "midi": 62, "lyric": "re" },
+    { "t": 1.00, "dur": 0.50, "midi": 64, "lyric": "mi" },
+    { "t": 1.50, "dur": 0.75, "midi": 65, "lyric": "fa" },
+    { "t": 2.25, "dur": 0.75, "midi": 67, "lyric": "sol" }
+  ]
+}

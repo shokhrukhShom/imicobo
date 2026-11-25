@@ -2,5 +2,18 @@
 # Put this at /etc/caddy/Caddyfile, then: sudo systemctl reload caddy
 imicobo.com, www.imicobo.com {
     encode gzip
-    reverse_proxy 127.0.0.1:8080
+
+    # Beta singing game — served straight from disk so audio seeking (HTTP Range)
+    # and large .mp3 files work properly. Everything under /opt/imicobo/beta/.
+    # NOTE: /api/beta/songs starts with /api, so it is NOT matched here — it still
+    # goes to relay.py below (which scans the song folders).
+    handle /beta/* {
+        root * /opt/imicobo
+        file_server
+    }
+
+    # Everything else → the Python relay (signaling, accounts, paywall, pages).
+    handle {
+        reverse_proxy 127.0.0.1:8080
+    }
 }

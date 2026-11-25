@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>iMicobo Sing · Beta</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#0a0c10">
+<style>
+  :root{
+    --bg:#0a0c10; --panel:#141922; --panel2:#1b2230; --line:#2a3340;
+    --ink:#e8eef5; --dim:#8593a5; --accent:#5eead4; --accent2:#22d3ee;
+    --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --gold:#fcd34d;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    -webkit-tap-highlight-color:transparent}
+  .beta-tag{display:inline-block;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;
+    color:#06231f;background:var(--accent);border-radius:999px;padding:2px 9px;font-weight:800;vertical-align:middle}
+  button{font:inherit;cursor:pointer;border:none}
+  .hidden{display:none !important}
+
+  /* ---- top bar ---- */
+  header{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);
+    position:sticky;top:0;background:rgba(10,12,16,.9);backdrop-filter:blur(8px);z-index:50}
+  header .back{background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    border-radius:10px;padding:8px 12px;font-size:14px}
+  header h1{font-size:18px;font-weight:700;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  header .brand{font-size:13px;letter-spacing:2px;text-transform:uppercase;color:var(--dim)}
+
+  /* ---- library ---- */
+  .wrap{max-width:900px;margin:0 auto;padding:22px 18px 60px}
+  .lead{color:var(--dim);font-size:14.5px;margin:2px 0 20px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+  .song{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;
+    display:flex;flex-direction:column;gap:10px;cursor:pointer;transition:.14s;position:relative;overflow:hidden}
+  .song:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .song .art{height:92px;border-radius:12px;background:linear-gradient(135deg,#1b2230,#243043);
+    display:grid;place-items:center;font-size:38px}
+  .song .nm{font-weight:700;font-size:16px;line-height:1.3}
+  .song .meta{color:var(--dim);font-size:12.5px;font-family:var(--mono)}
+  .song .row{display:flex;gap:8px;align-items:center;margin-top:2px}
+  .song .prev{background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    border-radius:9px;padding:7px 12px;font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px}
+  .song .prev.playing{background:var(--accent);color:#06231f;border-color:var(--accent)}
+  .song .play{margin-left:auto;color:var(--accent);font-weight:700;font-size:13px}
+  .empty{background:var(--panel);border:1px dashed var(--line);border-radius:16px;padding:40px 24px;text-align:center;color:var(--dim)}
+  .empty code{background:#0a0d12;padding:2px 7px;border-radius:6px;color:var(--accent);font-size:13px}
+
+  /* ---- stage (one song) ---- */
+  #stage{max-width:960px;margin:0 auto;padding:18px 16px 50px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px}
+
+  /* pairing */
+  .pair{text-align:center}
+  .pair .code{font:700 40px var(--mono);letter-spacing:9px;color:var(--accent);margin:8px 0}
+  .pair .code.waiting{color:var(--dim);opacity:.35}
+  .pair .qr{margin:10px auto 2px;width:168px;height:168px;background:#fff;border-radius:12px;padding:9px;display:none}
+  .pair .qr.show{display:block}.pair .qr svg{width:100%;height:100%;display:block}
+  .pair .or{color:var(--dim);font-size:11px;letter-spacing:2px;text-transform:uppercase;margin:12px 0 2px}
+  .miclink{display:inline-block;margin-top:10px;color:var(--accent);font-size:14px;text-decoration:none}
+  .miclink:hover{text-decoration:underline}
+  .singer{display:inline-flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:999px;padding:7px 14px;font-size:14px;margin-top:6px}
+  .singer .d{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 9px var(--ok)}
+
+  /* game canvas */
+  .lane{width:100%;height:260px;background:#070a0e;border:1px solid var(--line);border-radius:14px;display:block}
+  .lyricbox{min-height:92px;text-align:center;margin:16px 0 4px}
+  .lyr-cur{font-size:26px;font-weight:700;line-height:1.3}
+  .lyr-cur .done{color:var(--accent)}
+  .lyr-next{font-size:17px;color:var(--dim);margin-top:6px;min-height:22px}
+
+  .hud{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:14px}
+  .score{font:800 34px var(--mono);color:var(--gold);min-width:120px}
+  .score small{display:block;font:600 11px/1 inherit;color:var(--dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:3px}
+  .combo{font-size:14px;color:var(--accent);font-weight:700}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;align-items:center}
+  .btn{border-radius:12px;padding:13px 20px;font-size:15px;font-weight:700}
+  .btn.primary{background:var(--accent);color:#06231f}
+  .btn.ghost{background:var(--panel2);color:var(--ink);border:1px solid var(--line)}
+  .btn.ref{background:var(--panel2);color:var(--ink);border:1px solid var(--line)}
+  .btn.ref.on{background:var(--gold);color:#2a1e00;border-color:var(--gold)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .vol{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:13px;margin-left:auto}
+  .vol input{width:120px;accent-color:var(--accent)}
+  .refnote{color:var(--gold);font-size:13px;margin-top:10px;min-height:18px}
+  .micwarn{color:var(--warn);font-size:14px;margin-top:10px}
+
+  /* results */
+  .results{text-align:center;padding:10px 6px}
+  .grade{font:900 92px/1 inherit;margin:6px 0}
+  .grade.s{color:var(--gold)} .grade.a{color:var(--accent)} .grade.b{color:var(--accent2)}
+  .grade.c{color:var(--warn)} .grade.d{color:var(--dim)}
+  .bigscore{font:800 40px var(--mono);color:var(--ink)}
+  .rstats{color:var(--dim);font-size:14px;margin:10px 0 20px}
+
+  .soundgate{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:300;display:none;
+    align-items:center;gap:8px;background:var(--accent);color:#06231f;font:700 15px/1 inherit;
+    padding:13px 20px;border-radius:999px;cursor:pointer;box-shadow:0 8px 30px rgba(0,0,0,.45)}
+  .soundgate.show{display:flex}
+  canvas{touch-action:none}
+</style>
+</head>
+<body>
+<div class="soundgate" id="soundGate" onclick="kickAudio()">🔊 Tap to enable sound</div>
+
+<header>
+  <button class="back hidden" id="backBtn" onclick="goLibrary()">← Songs</button>
+  <h1 id="hdr">iMicobo Sing <span class="beta-tag">beta</span></h1>
+  <span class="brand">iMicobo</span>
+</header>
+
+<!-- ───────── LIBRARY ───────── -->
+<div class="wrap" id="library">
+  <div class="lead">Pick a song, connect your phone as the mic, and sing for a score. Tap <b>▶</b> to preview.</div>
+  <div class="grid" id="grid"></div>
+  <div class="empty hidden" id="empty">
+    No songs yet. Drop a folder into <code>beta/songs/&lt;name&gt;/</code> with all four files
+    (<code>-instrument.mp3</code>, <code>-original.mp3</code>, <code>-pitch.json</code>, <code>-lyrics.lrc</code>) and refresh.
+  </div>
+</div>
+
+<!-- ───────── STAGE ───────── -->
+<div id="stage" class="hidden">
+  <!-- pairing -->
+  <div class="card pair" id="pairCard">
+    <div style="font-size:15px;color:var(--dim)">Connect a phone as the microphone</div>
+    <div class="qr" id="qr"></div>
+    <div class="or">code</div>
+    <div class="code waiting" id="code">– – – – – –</div>
+    <a class="miclink" id="micLink" href="/mic.html" target="_blank" rel="noopener">🎤 No app? Use this device or a laptop as the mic</a>
+    <div id="singerBox"></div>
+  </div>
+
+  <!-- the game -->
+  <div class="card hidden" id="gameCard" style="margin-top:16px">
+    <canvas class="lane" id="lane" width="900" height="260"></canvas>
+    <div class="lyricbox">
+      <div class="lyr-cur" id="lyrCur">&nbsp;</div>
+      <div class="lyr-next" id="lyrNext">&nbsp;</div>
+    </div>
+    <div class="hud">
+      <div class="score"><small>Score</small><span id="scoreVal">0</span></div>
+      <div class="combo" id="combo"></div>
+    </div>
+    <div class="controls">
+      <button class="btn primary" id="startBtn" onclick="startSong()">▶ Start</button>
+      <button class="btn ref" id="refBtn" onclick="toggleReference()" disabled>🎧 Hear original</button>
+      <button class="btn ghost" id="restartBtn" onclick="restartSong()">↻ Restart</button>
+      <label class="vol">🎙️ Mic <input type="range" id="micVol" min="0" max="1" step="0.01" value="0.8"></label>
+    </div>
+    <div class="refnote" id="refNote"></div>
+    <div class="micwarn hidden" id="micWarn">Connect a phone as the mic to be scored — the song still plays without it.</div>
+  </div>
+
+  <!-- results -->
+  <div class="card results hidden" id="resultCard" style="margin-top:16px">
+    <div style="color:var(--dim);font-size:14px;letter-spacing:2px;text-transform:uppercase">Your score</div>
+    <div class="grade" id="grade">A</div>
+    <div class="bigscore" id="finalScore">0</div>
+    <div class="rstats" id="rstats"></div>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+      <button class="btn primary" onclick="restartSong()">↻ Sing again</button>
+      <button class="btn ghost" onclick="goLibrary()">← Pick another song</button>
+    </div>
+  </div>
+</div>
+
+<script src="/qr.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const CFG = { iceServers:[{urls:'stun:stun.l.google.com:19302'}] };
+
+/* ======================================================================
+   LIBRARY
+   ====================================================================== */
+let SONGS = [];
+let preview = null, previewId = null;
+
+async function loadLibrary(){
+  try{
+    const r = await fetch('/api/beta/songs');
+    const j = await r.json();
+    SONGS = j.songs || [];
+  }catch(e){ SONGS = []; }
+  const grid = $('grid'); grid.innerHTML = '';
+  if(!SONGS.length){ $('empty').classList.remove('hidden'); return; }
+  $('empty').classList.add('hidden');
+  SONGS.forEach(s => {
+    const el = document.createElement('div');
+    el.className = 'song';
+    el.innerHTML =
+      `<div class="art">🎵</div>
+       <div class="nm">${esc(s.title)}</div>
+       <div class="meta">${esc(s.id)}</div>
+       <div class="row">
+         <button class="prev" data-id="${esc(s.id)}">▶ Preview</button>
+         <span class="play">Sing →</span>
+       </div>`;
+    // open the song (but not when the preview button was tapped)
+    el.addEventListener('click', e => { if(e.target.closest('.prev')) return; openSong(s); });
+    const pbtn = el.querySelector('.prev');
+    pbtn.addEventListener('click', e => { e.stopPropagation(); togglePreview(s, pbtn); });
+    // desktop hover preview (harmless/no-op on touch)
+    el.addEventListener('mouseenter', () => startPreview(s, pbtn, 0.5));
+    el.addEventListener('mouseleave', () => { if(previewId===s.id && !pbtn.dataset.pinned) stopPreview(); });
+    grid.appendChild(el);
+  });
+}
+
+function startPreview(s, btn, vol){
+  if(previewId === s.id) return;
+  stopPreview();
+  preview = new Audio(s.original);
+  preview.volume = vol ?? 0.6;
+  preview.play().catch(()=>{});
+  previewId = s.id;
+  if(btn){ btn.classList.add('playing'); btn.textContent = '⏸ Preview'; }
+  preview.onended = stopPreview;
+}
+function stopPreview(){
+  if(preview){ try{ preview.pause(); }catch(_){} preview = null; }
+  document.querySelectorAll('.prev').forEach(b=>{ b.classList.remove('playing'); b.textContent='▶ Preview'; b.dataset.pinned=''; });
+  previewId = null;
+}
+function togglePreview(s, btn){
+  if(previewId === s.id){ stopPreview(); }
+  else { startPreview(s, btn, 0.7); if(btn) btn.dataset.pinned = '1'; }
+}
+
+/* ======================================================================
+   STAGE — one song: pairing + game
+   ====================================================================== */
+let song = null;              // the selected song
+let pitchData = null;         // {notes:[{t,dur,midi,lyric}], offset}
+let lrc = [];                 // [{t, text}]
+let instrAudio = null, origAudio = null;
+let referenceMode = false;    // true = listening to the original (scoring paused)
+let playing = false, finished = false;
+
+async function openSong(s){
+  stopPreview();
+  song = s;
+  $('library').classList.add('hidden');
+  $('stage').classList.remove('hidden');
+  $('backBtn').classList.remove('hidden');
+  $('hdr').textContent = s.title;
+  $('gameCard').classList.add('hidden');
+  $('resultCard').classList.add('hidden');
+  resetGameState();
+
+  // load the two tracks (same timeline) + notes + lyrics
+  instrAudio = new Audio(s.instrument); instrAudio.preload = 'auto';
+  origAudio  = new Audio(s.original);   origAudio.preload  = 'auto';
+  instrAudio.crossOrigin = origAudio.crossOrigin = 'anonymous';
+  instrAudio.addEventListener('ended', onSongEnded);
+
+  try{
+    const [pj, lt] = await Promise.all([
+      fetch(s.pitch).then(r=>r.json()),
+      fetch(s.lyrics).then(r=>r.text())
+    ]);
+    pitchData = normalizePitch(pj);
+    lrc = parseLRC(lt);
+  }catch(e){ pitchData = {notes:[], offset:0}; lrc = []; }
+
+  computeLaneRange();
+  $('gameCard').classList.remove('hidden');
+  updateMicWarn();
+  drawLane(0);
+  startPairing();
+}
+
+function goLibrary(){
+  stopEverything();
+  $('stage').classList.add('hidden');
+  $('backBtn').classList.add('hidden');
+  $('library').classList.remove('hidden');
+  $('hdr').innerHTML = 'iMicobo Sing <span class="beta-tag">beta</span>';
+  loadLibrary();
+}
+
+/* ---- pitch.json loader ----
+   Accepts two shapes:
+   (A) clean game format  {offset, notes:[{t,dur,midi,lyric}]}   ← preferred
+   (B) raw MIDI-dump      {tracks:[{notes:[{pitch,startSeconds,durationSeconds}]}]}
+   For (B) — a full polyphonic transcription — it extracts a monophonic top-line
+   melody on the fly (same idea as tools/pitch_convert.py) so a raw drop-in still
+   plays. Best quality still comes from a melody-only source. */
+function normalizePitch(pj){
+  const off = (pj && !Array.isArray(pj) && (pj.offset ?? pj.start_offset)) || 0;
+  // ---- (B) raw MIDI-dump schema → reduce to a melody line ----
+  if(pj && !Array.isArray(pj) && Array.isArray(pj.tracks)){
+    const raw = [];
+    for(const tr of pj.tracks)
+      for(const n of (tr.notes||[])){
+        if(n.startSeconds==null || n.pitch==null) continue;
+        raw.push({ t:+n.startSeconds, dur:+(n.durationSeconds||0.3), midi:+n.pitch });
+      }
+    return { notes: extractMelody(raw), offset:+off || 0 };
+  }
+  // ---- (A) already a note list ----
+  let notes = [];
+  const arr = Array.isArray(pj) ? pj : (pj.notes || pj.pitch || pj.events || []);
+  for(const n of arr){
+    const t   = num(n.t, n.time, n.start, n.ts, n.begin);
+    const dur = num(n.dur, n.duration, n.d, n.len, n.length);
+    let midi  = num(n.midi, n.pitch, n.note, n.n, n.m);
+    if(t==null || midi==null) continue;
+    if(midi > 127) midi = 69 + 12*Math.log2(midi/440);   // Hz → midi fallback
+    notes.push({ t:+t, dur:(dur!=null?+dur:0.4), midi:Math.round(+midi), lyric:(n.lyric ?? n.text ?? ''), hit:0 });
+  }
+  notes.sort((a,b)=>a.t-b.t);
+  return { notes, offset:+off || 0 };
+}
+function num(...xs){ for(const x of xs){ if(x!=null && x!=='' && !isNaN(+x)) return +x; } return null; }
+
+/* monophonic top-line melody from polyphonic notes (drop bass, highest voice,
+   median-smooth ornament spikes, group into notes) */
+function extractMelody(raw, {low=48, frame=0.02, minDur=0.09, smooth=7}={}){
+  if(!raw.length) return [];
+  const endT = Math.max(...raw.map(n=>n.t+n.dur));
+  let mel = raw.filter(n=>n.midi>=low); if(!mel.length) mel = raw;
+  const N = Math.floor(endT/frame)+1, seq = new Array(N).fill(null);
+  for(const n of mel){
+    const a=Math.floor(n.t/frame), b=Math.max(a+1,Math.floor((n.t+n.dur)/frame));
+    for(let i=a;i<Math.min(b,N);i++) if(seq[i]==null || n.midi>seq[i]) seq[i]=n.midi;
+  }
+  const sm = seq.slice(), h=smooth>>1;
+  for(let i=0;i<N;i++){
+    const w=[]; for(let j=Math.max(0,i-h);j<Math.min(N,i+h+1);j++) if(seq[j]!=null) w.push(seq[j]);
+    if(w.length){ w.sort((a,b)=>a-b); sm[i]=w[w.length>>1]; } else sm[i]=null;
+  }
+  const out=[]; let i=0;
+  while(i<N){ if(sm[i]==null){ i++; continue; }
+    let j=i; while(j<N && sm[j]===sm[i]) j++;
+    const dur=(j-i)*frame; if(dur>=minDur) out.push({t:+(i*frame).toFixed(3), dur:+dur.toFixed(3), midi:sm[i], lyric:'', hit:0});
+    i=j;
+  }
+  const merged=[];
+  for(const n of out){
+    const p=merged[merged.length-1];
+    if(p && p.midi===n.midi && n.t-(p.t+p.dur)<0.08) p.dur=+(n.t+n.dur-p.t).toFixed(3);
+    else merged.push(n);
+  }
+  return merged;
+}
+
+/* ---- .lrc parser: [mm:ss.xx] text ---- */
+function parseLRC(text){
+  const out = [];
+  const re = /\[(\d+):(\d+)(?:[.:](\d+))?\]/g;
+  (text||'').split(/\r?\n/).forEach(line=>{
+    const stamps = []; let m;
+    re.lastIndex = 0;
+    while((m = re.exec(line))){
+      const mm=+m[1], ss=+m[2], fr=m[3]?+('0.'+m[3]):0;
+      stamps.push(mm*60+ss+fr);
+    }
+    const txt = line.replace(re,'').trim();
+    if(stamps.length && txt) stamps.forEach(t=>out.push({t, text:txt}));
+  });
+  out.sort((a,b)=>a.t-b.t);
+  return out;
+}
+
+/* ======================================================================
+   PAIRING  (reuses the proven relay signaling from connect.html)
+   ====================================================================== */
+let myCode = null, pollTimer = null;
+let micPc = null, micStream = null, micId = null, micLive = false;
+
+async function startPairing(){
+  if(myCode){ $('code').textContent = myCode; return; }   // already paired this visit
+  try{
+    const kept = localStorage.getItem('imicobo.beta.code') || '';
+    const s = await (await fetch('/session' + (kept?`?code=${encodeURIComponent(kept)}`:''),
+                                 {method:'POST'})).json();
+    myCode = s.code;
+    localStorage.setItem('imicobo.beta.code', myCode);
+    $('code').textContent = myCode; $('code').classList.remove('waiting');
+    try{ $('qr').innerHTML = QR.svg(`${location.origin}/j?c=${myCode}`,168); $('qr').classList.add('show'); }catch(_){}
+    try{ $('micLink').href = '/mic.html?c=' + myCode; }catch(_){}
+    pollTimer = setInterval(pollRoom, 900);
+  }catch(e){ $('code').textContent = 'relay?'; }
+}
+
+async function pollRoom(){
+  if(!myCode) return;
+  let s; try{ s = await (await fetch(`/session?code=${myCode}`)).json(); }catch(_){ return; }
+  if(!s.active) return;
+  // single-singer beta: grab the first mic that has an offer waiting
+  const first = (s.mics||[]).find(m => m.hasOffer);
+  if(first && !micPc){ connectMic(first.id, first.name); }
+  if(micId){
+    const still = (s.mics||[]).some(m => m.id === micId);
+    if(!still) dropMic();
+  }
+}
+
+async function connectMic(id, name){
+  micId = id;
+  const pc = new RTCPeerConnection(CFG); micPc = pc;
+  pc.ontrack = e => attachSinger(e.streams[0], name);
+  pc.onconnectionstatechange = () => {
+    const st = pc.connectionState;
+    if(st==='connected'){ micLive = true; renderSinger(name,true); updateMicWarn(); }
+    else if(st==='failed'){ dropMic(); }
+  };
+  // ignore the mic's fx data channel for scoring (we only need the audio)
+  pc.ondatachannel = e => { e.channel.onmessage = ()=>{}; };
+  try{
+    const d = await (await fetch(`/offer?code=${myCode}&mic=${id}`)).json();
+    if(!d.sdp){ dropMic(); return; }
+    await pc.setRemoteDescription(JSON.parse(d.sdp));
+    const ans = await pc.createAnswer(); await pc.setLocalDescription(ans); await iceDone(pc);
+    await fetch(`/answer?code=${myCode}&mic=${id}`,{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(pc.localDescription)});
+  }catch(e){ dropMic(); }
+}
+
+function dropMic(){
+  try{ micPc && micPc.close(); }catch(_){}
+  micPc = null; micId = null; micLive = false; micStream = null;
+  teardownPitch();
+  renderSinger(null,false); updateMicWarn();
+}
+function iceDone(pc){ return new Promise(res=>{
+  if(pc.iceGatheringState==='complete') return res();
+  const c=()=>{ if(pc.iceGatheringState==='complete'){ pc.removeEventListener('icegatheringstatechange',c); res(); } };
+  pc.addEventListener('icegatheringstatechange',c); setTimeout(res,4000);
+});}
+
+function renderSinger(name, live){
+  const box = $('singerBox');
+  box.innerHTML = live
+    ? `<div class="singer"><span class="d"></span>${esc(name||'Singer')} connected — ready to sing</div>`
+    : '';
+}
+function updateMicWarn(){ $('micWarn').classList.toggle('hidden', micLive); }
+
+/* ======================================================================
+   AUDIO IN (singer) → pitch detection
+   ====================================================================== */
+let actx = null, micSrc = null, micGain = null, analyser = null, pitchBuf = null;
+let curPitchMidi = null, curClarity = 0;
+
+function attachSinger(stream, name){
+  micStream = stream;
+  renderSinger(name, true);
+  try{
+    if(!actx) actx = new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
+    micSrc = actx.createMediaStreamSource(stream);
+    micGain = actx.createGain(); micGain.gain.value = +$('micVol').value;
+    analyser = actx.createAnalyser();
+    analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0;
+    pitchBuf = new Float32Array(analyser.fftSize);
+    // tap for pitch + play the voice out of the speakers so the room hears it
+    micSrc.connect(analyser);
+    micSrc.connect(micGain); micGain.connect(actx.destination);
+    // keep latency low
+    try{ const r = micPc.getReceivers().find(x=>x.track&&x.track.kind==='audio');
+         if(r){ if('jitterBufferTarget' in r) r.jitterBufferTarget=0;
+                if('playoutDelayHint' in r) r.playoutDelayHint=0; } }catch(_){}
+  }catch(e){}
+  kickAudio();
+}
+function teardownPitch(){
+  try{ micSrc && micSrc.disconnect(); micGain && micGain.disconnect(); analyser && analyser.disconnect(); }catch(_){}
+  micSrc = micGain = analyser = pitchBuf = null; curPitchMidi = null; curClarity = 0;
+}
+$('micVol').addEventListener('input', e => { if(micGain) micGain.gain.value = +e.target.value; });
+
+/* autocorrelation pitch detector — returns frequency in Hz, or -1 */
+function detectPitch(buf, rate){
+  let rms = 0;
+  for(let i=0;i<buf.length;i++){ rms += buf[i]*buf[i]; }
+  rms = Math.sqrt(rms/buf.length);
+  if(rms < 0.008){ curClarity = 0; return -1; }           // too quiet
+  let r1=0, r2=buf.length-1, thres=0.2;
+  for(let i=0;i<buf.length/2;i++){ if(Math.abs(buf[i])<thres){ r1=i; break; } }
+  for(let i=1;i<buf.length/2;i++){ if(Math.abs(buf[buf.length-i])<thres){ r2=buf.length-i; break; } }
+  const b = buf.slice(r1, r2); const n = b.length;
+  const c = new Float32Array(n);
+  for(let lag=0;lag<n;lag++){ let s=0; for(let i=0;i<n-lag;i++) s += b[i]*b[i+lag]; c[lag]=s; }
+  let d=0; while(d<n-1 && c[d]>c[d+1]) d++;
+  let maxval=-1, maxpos=-1;
+  for(let i=d;i<n;i++){ if(c[i]>maxval){ maxval=c[i]; maxpos=i; } }
+  if(maxpos<=0){ curClarity=0; return -1; }
+  // parabolic interpolation around the peak
+  let T0 = maxpos;
+  const x1=c[maxpos-1]||0, x2=c[maxpos], x3=c[maxpos+1]||0;
+  const a=(x1+x3-2*x2)/2, bb=(x3-x1)/2;
+  if(a) T0 = maxpos - bb/(2*a);
+  curClarity = maxval / (c[0]||1);
+  if(curClarity < 0.5){ return -1; }
+  const freq = rate / T0;
+  if(freq < 70 || freq > 1100) return -1;                 // human singing range
+  return freq;
+}
+const hzToMidi = hz => 69 + 12*Math.log2(hz/440);
+
+/* ======================================================================
+   SCORING + GAME LOOP
+   ====================================================================== */
+const TOL = 2.0;        // semitones of slack to count as "on pitch"
+const LAT = 0.12;       // seconds: rough mic/network latency compensation
+let score = 0, combo = 0, bestCombo = 0, rafId = null;
+let totalNoteTime = 0, hitNoteTime = 0;
+
+function resetGameState(){
+  score=0; combo=0; bestCombo=0; totalNoteTime=0; hitNoteTime=0;
+  finished=false; playing=false; referenceMode=false;
+  if(pitchData) pitchData.notes.forEach(n=>n.hit=0);
+  $('scoreVal').textContent = '0'; $('combo').textContent=''; $('refNote').textContent='';
+  $('refBtn').classList.remove('on'); $('refBtn').textContent='🎧 Hear original'; $('refBtn').disabled = true;
+  $('startBtn').disabled = false; $('startBtn').textContent='▶ Start';
+  $('lyrCur').innerHTML='&nbsp;'; $('lyrNext').innerHTML='&nbsp;';
+}
+
+function songTime(){
+  const a = referenceMode ? origAudio : instrAudio;
+  return a ? a.currentTime : 0;
+}
+
+function startSong(){
+  if(!song) return;
+  kickAudio();
+  resetForPlay();
+  referenceMode = false;
+  instrAudio.currentTime = 0;
+  instrAudio.play().catch(()=>{});
+  playing = true; finished=false;
+  $('startBtn').disabled = true; $('startBtn').textContent='● Singing…';
+  $('refBtn').disabled = false;
+  loop();
+}
+function resetForPlay(){
+  score=0; combo=0; bestCombo=0; totalNoteTime=0; hitNoteTime=0;
+  pitchData.notes.forEach(n=>n.hit=0);
+  $('resultCard').classList.add('hidden');
+}
+function restartSong(){
+  stopEverything(false);
+  resetGameState();
+  $('resultCard').classList.add('hidden');
+  startSong();
+}
+
+/* reference mode: swap to original at the SAME position, pause scoring */
+function toggleReference(){
+  if(!playing && !referenceMode && instrAudio.paused && !finished){ /* allow preview before start */ }
+  const t = songTime();
+  referenceMode = !referenceMode;
+  if(referenceMode){
+    instrAudio.pause();
+    origAudio.currentTime = t;
+    origAudio.play().catch(()=>{});
+    $('refBtn').classList.add('on'); $('refBtn').textContent='🎤 Back to karaoke';
+    $('refNote').textContent = 'Reference mode — listen to how it goes. Scoring is paused.';
+  }else{
+    origAudio.pause();
+    instrAudio.currentTime = t;
+    if(playing) instrAudio.play().catch(()=>{});
+    $('refBtn').classList.remove('on'); $('refBtn').textContent='🎧 Hear original';
+    $('refNote').textContent = '';
+  }
+}
+
+function loop(){
+  rafId = requestAnimationFrame(loop);
+  const t = songTime() - (pitchData.offset||0) - LAT;
+
+  // read live pitch from the mic
+  if(analyser && pitchBuf){
+    analyser.getFloatTimeDomainData(pitchBuf);
+    const hz = detectPitch(pitchBuf, actx.sampleRate);
+    curPitchMidi = hz>0 ? hzToMidi(hz) : null;
+  } else curPitchMidi = null;
+
+  // find the active target note
+  let active = null;
+  const notes = pitchData.notes;
+  for(let i=0;i<notes.length;i++){
+    const n = notes[i];
+    if(t >= n.t && t < n.t + n.dur){ active = n; break; }
+    if(n.t > t) break;
+  }
+
+  // score only when NOT in reference mode, song is running, and a mic is live
+  if(!referenceMode && playing && active && curPitchMidi!=null && micLive){
+    const dt = 1/60;
+    totalNoteTime += dt;
+    if(semitoneDiff(curPitchMidi, active.midi) <= TOL){
+      hitNoteTime += dt;
+      active.hit = Math.min(active.dur, (active.hit||0) + dt);
+      score += 10; combo += 1; bestCombo = Math.max(bestCombo, combo);
+    } else {
+      combo = 0;
+    }
+    $('scoreVal').textContent = Math.round(score).toLocaleString();
+    $('combo').textContent = combo>4 ? `🔥 ${combo} combo` : '';
+  }
+
+  updateLyrics(t);
+  drawLane(t);
+}
+
+/* octave-free pitch comparison */
+function semitoneDiff(a, b){
+  let d = Math.abs(a-b) % 12;
+  return Math.min(d, 12-d);
+}
+
+function updateLyrics(t){
+  if(!lrc.length){ return; }
+  let idx = -1;
+  for(let i=0;i<lrc.length;i++){ if(lrc[i].t <= t) idx = i; else break; }
+  const cur = idx>=0 ? lrc[idx] : null;
+  const nxt = idx+1 < lrc.length ? lrc[idx+1] : null;
+  $('lyrCur').textContent = cur ? cur.text : '♪';
+  $('lyrNext').textContent = nxt ? nxt.text : '';
+}
+
+function onSongEnded(){ if(!referenceMode) finishSong(); }
+function finishSong(){
+  playing = false; finished = true;
+  cancelAnimationFrame(rafId); rafId=null;
+  try{ instrAudio.pause(); origAudio.pause(); }catch(_){}
+  showResults();
+}
+
+function showResults(){
+  $('gameCard').classList.add('hidden');
+  const card = $('resultCard'); card.classList.remove('hidden');
+  const pct = totalNoteTime>0 ? Math.round(100*hitNoteTime/totalNoteTime) : 0;
+  let g='d', label='D';
+  if(!micLive && score===0){ g='d'; label='—'; }
+  else if(pct>=90){ g='s'; label='S'; }
+  else if(pct>=75){ g='a'; label='A'; }
+  else if(pct>=55){ g='b'; label='B'; }
+  else if(pct>=35){ g='c'; label='C'; }
+  const gradeEl = $('grade'); gradeEl.className = 'grade '+g; gradeEl.textContent = label;
+  $('finalScore').textContent = Math.round(score).toLocaleString() + ' pts';
+  $('rstats').textContent = micLive
+    ? `${pct}% on pitch · best combo ${bestCombo}`
+    : 'No mic was connected, so there was nothing to score. Connect a phone and sing again!';
+  if(label==='S' || label==='A') burst();
+}
+
+/* ======================================================================
+   LANE VISUALIZATION (SingStar-style scrolling notes)
+   ====================================================================== */
+let laneLo = 55, laneHi = 79;   // midi range shown
+function computeLaneRange(){
+  const ms = pitchData.notes.map(n=>n.midi);
+  if(ms.length){ laneLo = Math.min(...ms)-3; laneHi = Math.max(...ms)+3; }
+  if(laneHi-laneLo < 12){ const c=(laneHi+laneLo)/2; laneLo=c-6; laneHi=c+6; }
+}
+function drawLane(t){
+  const cv = $('lane'), g = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  g.clearRect(0,0,W,H);
+  g.fillStyle = '#070a0e'; g.fillRect(0,0,W,H);
+  const WIN_PAST = 1.2, WIN_FUT = 3.5, WIN = WIN_PAST + WIN_FUT;
+  const nowX = W * (WIN_PAST/WIN);
+  const xOf = tt => W * ((tt - (t - WIN_PAST)) / WIN);
+  const yOf = midi => {
+    const r = (midi - laneLo)/(laneHi - laneLo);
+    return H - 14 - r*(H-28);
+  };
+  // faint horizontal guide lines (octave markers)
+  g.strokeStyle = 'rgba(255,255,255,.05)'; g.lineWidth=1;
+  for(let m=Math.ceil(laneLo/12)*12; m<laneHi; m+=12){
+    const y=yOf(m); g.beginPath(); g.moveTo(0,y); g.lineTo(W,y); g.stroke();
+  }
+  // target notes
+  for(const n of pitchData.notes){
+    const x1 = xOf(n.t), x2 = xOf(n.t+n.dur);
+    if(x2 < -20 || x1 > W+20) continue;
+    const y = yOf(n.midi), h = 11;
+    const ratio = n.dur>0 ? (n.hit||0)/n.dur : 0;
+    // base block
+    g.fillStyle = 'rgba(94,234,212,.22)';
+    rr(g, x1, y-h/2, Math.max(3,x2-x1), h, 5); g.fill();
+    // filled portion = how much of it you nailed
+    if(ratio>0){
+      g.fillStyle = 'rgba(74,222,128,.9)';
+      rr(g, x1, y-h/2, Math.max(2,(x2-x1)*Math.min(1,ratio)), h, 5); g.fill();
+    }
+    g.strokeStyle='rgba(94,234,212,.5)'; g.lineWidth=1; rr(g,x1,y-h/2,Math.max(3,x2-x1),h,5); g.stroke();
+  }
+  // playhead
+  g.strokeStyle='rgba(252,211,77,.8)'; g.lineWidth=2;
+  g.beginPath(); g.moveTo(nowX,0); g.lineTo(nowX,H); g.stroke();
+  // the singer's live pitch dot
+  if(curPitchMidi!=null){
+    const clamped = Math.max(laneLo, Math.min(laneHi, foldToLane(curPitchMidi)));
+    const y = yOf(clamped);
+    // on-pitch glow if matching the active note
+    const act = activeNoteAt(t);
+    const good = act && semitoneDiff(curPitchMidi, act.midi) <= TOL;
+    g.fillStyle = good ? '#4ade80' : '#fbbf24';
+    g.shadowColor = good ? '#4ade80' : '#fbbf24'; g.shadowBlur = 14;
+    g.beginPath(); g.arc(nowX, y, 8, 0, Math.PI*2); g.fill();
+    g.shadowBlur = 0;
+  }
+}
+function activeNoteAt(t){
+  for(const n of pitchData.notes){ if(t>=n.t && t<n.t+n.dur) return n; if(n.t>t) break; } return null;
+}
+/* put the sung pitch in the same octave band as the lane so the dot stays visible */
+function foldToLane(midi){
+  const mid = (laneLo+laneHi)/2;
+  while(midi < mid-6) midi += 12;
+  while(midi > mid+6) midi -= 12;
+  return midi;
+}
+function rr(g,x,y,w,h,r){ r=Math.min(r,h/2,w/2); g.beginPath();
+  g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r);
+  g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); }
+
+/* tiny confetti burst for a good score */
+function burst(){
+  const n=120, parts=[];
+  const cv=document.createElement('canvas');
+  cv.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:400';
+  cv.width=innerWidth; cv.height=innerHeight; document.body.appendChild(cv);
+  const g=cv.getContext('2d'); const cols=['#5eead4','#22d3ee','#fcd34d','#4ade80','#f87171'];
+  for(let i=0;i<n;i++) parts.push({x:innerWidth/2,y:innerHeight/3,
+    vx:(Math.random()-.5)*12, vy:Math.random()*-12-4, c:cols[i%cols.length], r:Math.random()*5+3, life:1});
+  let frames=0;
+  (function anim(){ frames++; g.clearRect(0,0,cv.width,cv.height);
+    parts.forEach(p=>{ p.vy+=0.4; p.x+=p.vx; p.y+=p.vy; p.life-=0.012;
+      g.globalAlpha=Math.max(0,p.life); g.fillStyle=p.c;
+      g.fillRect(p.x,p.y,p.r,p.r); });
+    if(frames<140) requestAnimationFrame(anim); else cv.remove();
+  })();
+}
+
+/* ======================================================================
+   AUDIO UNLOCK + teardown
+   ====================================================================== */
+function kickAudio(){
+  if(actx && actx.state!=='running') actx.resume().catch(()=>{});
+  [instrAudio, origAudio].forEach(a=>{ if(a && !a.paused) a.play().catch(()=>{}); });
+  setTimeout(()=>{ const sb=$('soundGate'); if(sb) sb.classList.remove('show'); }, 150);
+}
+['click','touchstart','keydown','pointerdown'].forEach(ev=>document.addEventListener(ev, kickAudio, {passive:true}));
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) kickAudio(); });
+
+function stopEverything(toLibrary=true){
+  cancelAnimationFrame(rafId); rafId=null; playing=false;
+  try{ instrAudio && instrAudio.pause(); origAudio && origAudio.pause(); }catch(_){}
+  if(toLibrary){ /* keep the mic paired for reuse */ }
+}
+
+function esc(x){ return (x||'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+
+// keep the canvas crisp on resize
+addEventListener('resize', ()=>{ if(song) drawLane(songTime()); });
+
+loadLibrary();
+</script>
+</body>
+</html>

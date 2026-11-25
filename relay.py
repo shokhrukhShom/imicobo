@@ -24,7 +24,7 @@ import json, os, random, socket, threading, time, urllib.parse, urllib.request
 import sqlite3, hmac, hashlib, base64, re, smtplib, ssl
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 
 PORT = int(os.environ.get("PORT", "8080"))
 
@@ -411,6 +411,54 @@ def verify_google_token(cred):
     email = (info.get("email") or "").strip().lower()
     return email or None
 
+# ---- beta: the singing-game song catalog -------------------------------------
+# Each song lives in its own folder under beta/songs/<slug>/ and must carry all
+# four files (matched by suffix). A song shows up in the game ONLY when all four
+# are present, so a half-uploaded song never appears half-broken.
+BETA_DIR = os.environ.get("BETA_DIR", "beta")
+BETA_SUFFIXES = {"instrument": "-instrument.mp3", "original": "-original.mp3",
+                 "pitch": "-pitch.json", "lyrics": "-lyrics.lrc"}
+
+def beta_scan_songs():
+    base = os.path.join(BETA_DIR, "songs")
+    out = []
+    try:
+        slugs = sorted(os.listdir(base))
+    except OSError:
+        return out
+    for slug in slugs:
+        d = os.path.join(base, slug)
+        if not os.path.isdir(d) or slug.startswith((".", "_")):
+            continue
+        try:
+            files = os.listdir(d)
+        except OSError:
+            continue
+        found, fnames = {}, {}
+        for kind, suf in BETA_SUFFIXES.items():
+            match = next((f for f in files if f.endswith(suf)), None)
+            if match:
+                fnames[kind] = match
+                found[kind] = "/" + "/".join(
+                    quote(x) for x in (BETA_DIR, "songs", slug, match))
+        if len(found) != 4:
+            continue  # must have all four to be playable
+        title = None
+        try:
+            with open(os.path.join(d, fnames["pitch"]), "r", encoding="utf-8") as pf:
+                meta = json.load(pf)
+            if isinstance(meta, dict):
+                title = meta.get("song") or meta.get("title")
+        except Exception:
+            pass
+        if not title:
+            title = slug.replace("_", " ").replace("-", " ").strip().title()
+        out.append({"id": slug, "title": title,
+                    "instrument": found["instrument"], "original": found["original"],
+                    "pitch": found["pitch"], "lyrics": found["lyrics"]})
+    return out
+
+
 def stripe_webhook_ok(raw_bytes, sig_header):
     if not STRIPE_WEBHOOK_SECRET or not sig_header: return False
     parts = dict(p.split("=", 1) for p in sig_header.split(",") if "=" in p)
@@ -506,6 +554,10 @@ class Handler(BaseHTTPRequestHandler):
                                "has_password": has_password(email),
                                "google_client_id": GOOGLE_CLIENT_ID,
                                "stripe_mode": mode})
+
+        # ---- beta singing game: list playable songs (folders with all 4 files) ----
+        if p == "/api/beta/songs":
+            return self._json({"songs": beta_scan_songs()})
 
         # Stripe returns the paid user here; confirm payment, unlock this browser.
         if p == "/paid":
