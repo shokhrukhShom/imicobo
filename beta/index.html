@@ -315,15 +315,18 @@ function extractMelody(raw,{low=48,frame=.02,minDur=.09,smooth=7}={}){
     const dur=(j-i)*frame; if(dur>=minDur) out.push({t:+(i*frame).toFixed(3),dur:+dur.toFixed(3),midi:sm[i],hit:0}); i=j; }
   return out;
 }
+// keep ALL timestamps, including blank [mm:ss] end-markers (text=''), so each
+// line knows exactly where it stops. [ti:], [tool:] etc. have no digits → ignored.
 function parseLRC(text){ const out=[], re=/\[(\d+):(\d+)(?:[.:](\d+))?\]/g;
   (text||'').split(/\r?\n/).forEach(line=>{ const st=[]; let m; re.lastIndex=0;
     while((m=re.exec(line))){ const mm=+m[1],ss=+m[2],fr=m[3]?+('0.'+m[3]):0; st.push(mm*60+ss+fr); }
-    const txt=line.replace(re,'').trim(); if(st.length&&txt) st.forEach(t=>out.push({t,text:txt})); });
+    const txt=line.replace(re,'').trim(); if(st.length) st.forEach(t=>out.push({t,text:txt})); });
   out.sort((a,b)=>a.t-b.t); return out; }
-function buildWordTiming(lrc){ lrcWords=[];
-  for(let i=0;i<lrc.length;i++){ const start=lrc[i].t, end=(i+1<lrc.length?lrc[i+1].t:start+4);
-    const words=lrc[i].text.split(/\s+/).filter(Boolean), span=Math.max(0.3,end-start);
-    lrcWords.push({start,end,text:lrc[i].text,words:words.map((w,k)=>({w,t:start+(k/words.length)*span}))}); } }
+function buildWordTiming(all){ lrcWords=[];
+  for(let i=0;i<all.length;i++){ if(!all[i].text) continue;      // blank marker = line end only
+    const start=all[i].t, end=(i+1<all.length?all[i+1].t:start+4);  // next timestamp (blank or next line)
+    const words=all[i].text.split(/\s+/).filter(Boolean), span=Math.max(0.3,end-start);
+    lrcWords.push({start,end,text:all[i].text,words:words.map((w,k)=>({w,t:start+(k/words.length)*span}))}); } }
 
 /* ============================ SCORING ============================ */
 const TOL=3.0, SMOOTH=5, NEED=0.55; let LAT=0.12;
