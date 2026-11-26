@@ -329,7 +329,7 @@ function buildWordTiming(all){ lrcWords=[];
     if((i===0&&lrcWords[i].start>=8)||(i>0&&gap>=6)) cues.push(lrcWords[i].start); } }
 
 /* ============================ SCORING ============================ */
-const TOL=3.0, SMOOTH=5, NEED=0.55; let LAT=0.2;   // mic latency compensation (tune with Sync slider)
+const TOL=3.0, SMOOTH=7, NEED=0.55; let LAT=0.2;   // mic latency compensation (tune with Sync slider)
 let score=0, combo=0, bestCombo=0, rafId=null, lastT=0, pitchHist=[], trail=[], curPitchMidi=null, prevActive=null, embers=[];
 
 function resetGameState(){
@@ -386,7 +386,11 @@ function loop(){
     $('scoreVal').textContent=Math.round(score).toLocaleString(); $('combo').textContent=combo>6?`🔥 ${combo}`:'';
   }
   if(active!==prevActive){ if(prevActive&&prevActive.dur>0&&prevActive.hit/(prevActive.dur*NEED)>=1) floatEmoji(); prevActive=active; }
-  if(sMidi!=null){ const good=active&&semitoneDiff(sMidi,active.midi)<=TOL; trail.push({t,midi:foldToLane(sMidi),good}); }
+  if(sMidi!=null){ const good=active&&semitoneDiff(sMidi,active.midi)<=TOL;
+    const ref=active?active.midi:(laneLo+laneHi)/2;
+    // on pitch → snap the line onto the bar (satisfying + clearly shows hits); off → show your real contour
+    const dm = good ? active.midi : foldNear(sMidi,ref);
+    trail.push({t,midi:clampLane(dm),good}); }
   while(trail.length&&trail[0].t<t-2) trail.shift();
   updateCue(t); updateLyrics(t); updateTime(); drawLane(t);
 }
@@ -435,6 +439,8 @@ function computeLaneRange(){ const ms=pitchData.notes.map(n=>n.midi).sort((a,b)=
   if(ms.length){ const p=q=>ms[Math.min(ms.length-1,Math.max(0,Math.floor(q*ms.length)))]; laneLo=p(.05)-3; laneHi=p(.95)+3; }
   if(laneHi-laneLo<14){ const c=(laneHi+laneLo)/2; laneLo=c-7; laneHi=c+7; } }
 function foldToLane(m){ const c=(laneLo+laneHi)/2; while(m<c-6) m+=12; while(m>c+6) m-=12; return m; }
+/* shift m by whole octaves to sit closest to a reference note (keeps the trail near the bar it's matching) */
+function foldNear(m,ref){ while(m-ref>6) m-=12; while(ref-m>6) m+=12; return m; }
 function clampLane(m){ return Math.max(laneLo,Math.min(laneHi,m)); }
 function fitLane(){ const cv=$('lane'); const dpr=devicePixelRatio||1; cv.width=Math.max(1,cv.clientWidth*dpr); cv.height=Math.max(1,cv.clientHeight*dpr); cv.getContext('2d').setTransform(dpr,0,0,dpr,0,0); }
 /* low pitch = cold blue, middle = green, high = glowing red */
@@ -465,8 +471,9 @@ function drawLane(t){
   if(trail.length>1){ g.lineWidth=3; g.lineJoin='round';
     for(let i=1;i<trail.length;i++){ const a=trail[i-1],b=trail[i]; g.strokeStyle=b.good?'#4ade80':'rgba(255,255,255,.75)';
       g.beginPath(); g.moveTo(xOf(a.t),yOf(clampLane(a.midi))); g.lineTo(xOf(b.t),yOf(clampLane(b.midi))); g.stroke(); } }
-  if(curPitchMidi!=null){ const y=yOf(clampLane(foldToLane(curPitchMidi)));
-    g.fillStyle=good?'#4ade80':'#fff'; g.shadowColor=g.fillStyle; g.shadowBlur=14; g.beginPath(); g.arc(nowX,y,7,0,Math.PI*2); g.fill(); g.shadowBlur=0; }
+  if(curPitchMidi!=null){ const ref=act?act.midi:(laneLo+laneHi)/2;
+    const dm=good?act.midi:foldNear(curPitchMidi,ref); const y=yOf(clampLane(dm));
+    g.fillStyle=good?'#4ade80':'#fff'; g.shadowColor=g.fillStyle; g.shadowBlur=good?18:14; g.beginPath(); g.arc(nowX,y,good?9:7,0,Math.PI*2); g.fill(); g.shadowBlur=0; }
   for(const e of embers){ g.globalAlpha=Math.max(0,e.life); g.fillStyle=e.c; g.fillRect(e.x,e.y,e.r,e.r); } g.globalAlpha=1;
 }
 function activeNoteAt(t){ for(const n of pitchData.notes){ if(t>=n.t&&t<n.t+n.dur) return n; if(n.t>t) break; } return null; }
