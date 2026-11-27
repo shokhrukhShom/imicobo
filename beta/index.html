@@ -135,7 +135,7 @@
     <div class="qr" id="qr"></div>
     <div class="or">code</div>
     <div class="code waiting" id="code">– – – – – –</div>
-    <a class="miclink" id="micLink" href="/mic.html" target="_blank" rel="noopener">No app? Use this device or a laptop as the mic →</a>
+    <a class="miclink" id="micLink" href="/beta/mic.html" target="_blank" rel="noopener">No app? Use this device or a laptop as the mic →</a>
   </div>
 
   <div id="libraryPanel" class="hidden">
@@ -201,8 +201,8 @@ async function boot(){
     const s=await (await fetch('/session'+(kept?`?code=${encodeURIComponent(kept)}`:''),{method:'POST'})).json();
     myCode=s.code; localStorage.setItem('imicobo.beta.code',myCode);
     $('code').textContent=myCode; $('code').classList.remove('waiting');
-    try{ $('qr').innerHTML=QR.svg(`${location.origin}/j?c=${myCode}`,190); $('qr').classList.add('show'); }catch(_){}
-    try{ $('micLink').href='/mic.html?c='+myCode; }catch(_){}
+    try{ $('qr').innerHTML=QR.svg(`${location.origin}/beta/mic.html?c=${myCode}`,190); $('qr').classList.add('show'); }catch(_){}
+    try{ $('micLink').href='/beta/mic.html?c='+myCode; }catch(_){}
     pollTimer=setInterval(pollRoom,900);
   }catch(e){ $('code').textContent='relay?'; }
 }
@@ -216,7 +216,8 @@ async function connectMic(id,name){
   micId=id; const pc=new RTCPeerConnection(CFG); micPc=pc;
   pc.ontrack=e=>attachSinger(e.streams[0],name);
   pc.onconnectionstatechange=()=>{ const st=pc.connectionState; if(st==='connected'){ micLive=true; onConnected(); } else if(st==='failed'){ dropMic(); } };
-  pc.ondatachannel=e=>{ e.channel.onmessage=()=>{}; };
+  // phone-side pitch: read the note numbers the phone sends over the data channel
+  pc.ondatachannel=e=>{ e.channel.onmessage=ev=>{ const hz=parseFloat(ev.data); if(!isNaN(hz)){ dcHz=hz; dcAt=performance.now(); usingDC=true; } }; };
   try{
     const d=await (await fetch(`/offer?code=${myCode}&mic=${id}`)).json(); if(!d.sdp){ dropMic(); return; }
     await pc.setRemoteDescription(JSON.parse(d.sdp));
@@ -331,6 +332,7 @@ function buildWordTiming(all){ lrcWords=[];
 /* ============================ SCORING ============================ */
 const TOL=3.0, SMOOTH=7, NEED=0.55; let LAT=0.2;   // mic latency compensation (tune with Sync slider)
 let score=0, combo=0, bestCombo=0, rafId=null, lastT=0, pitchHist=[], trail=[], curPitchMidi=null, prevActive=null, embers=[];
+let dcHz=-1, dcAt=0, usingDC=false;   // phone-side pitch over the data channel (preferred when present)
 
 function resetGameState(){
   score=0; combo=0; bestCombo=0; finished=false; playing=false; started=false; referenceMode=false;
@@ -373,8 +375,12 @@ function loop(){
   const now=performance.now()/1000; let dt=now-lastT; lastT=now; if(dt>0.1) dt=0.1;
   const t=songTime()-(pitchData.offset||0)-LAT;
   let sMidi=null;
-  if(analyser&&pitchBuf){ analyser.getFloatTimeDomainData(pitchBuf); const hz=detectPitch(pitchBuf,actx.sampleRate);
-    if(hz>0){ pitchHist.push(hzToMidi(hz)); if(pitchHist.length>SMOOTH) pitchHist.shift(); const s=[...pitchHist].sort((a,b)=>a-b); sMidi=s[s.length>>1]; } else pitchHist.length=0; }
+  if(usingDC){                                   // phone already detected + smoothed the note
+    if(performance.now()-dcAt<250 && dcHz>0) sMidi=hzToMidi(dcHz);
+  } else if(analyser&&pitchBuf){                  // fallback: detect from the received audio
+    analyser.getFloatTimeDomainData(pitchBuf); const hz=detectPitch(pitchBuf,actx.sampleRate);
+    if(hz>0){ pitchHist.push(hzToMidi(hz)); if(pitchHist.length>SMOOTH) pitchHist.shift(); const s=[...pitchHist].sort((a,b)=>a-b); sMidi=s[s.length>>1]; } else pitchHist.length=0;
+  }
   curPitchMidi=sMidi;
   let active=null; const ns=pitchData.notes;
   for(let i=0;i<ns.length;i++){ const n=ns[i]; if(t>=n.t&&t<n.t+n.dur){ active=n; break; } if(n.t>t) break; }
@@ -528,7 +534,7 @@ function attachSinger(stream,name){ micStream=stream; micName=name||micName;
     try{ const r=micPc.getReceivers().find(x=>x.track&&x.track.kind==='audio'); if(r){ if('jitterBufferTarget' in r) r.jitterBufferTarget=0; if('playoutDelayHint' in r) r.playoutDelayHint=0; } }catch(_){}
   }catch(e){}
   kickAudio(); }
-function teardownPitch(){ try{ micSrc&&micSrc.disconnect(); analyser&&analyser.disconnect(); }catch(_){} if(micEl){ try{ micEl.srcObject=null; micEl.remove(); }catch(_){} micEl=null; } micSrc=analyser=pitchBuf=null; curPitchMidi=null; }
+function teardownPitch(){ try{ micSrc&&micSrc.disconnect(); analyser&&analyser.disconnect(); }catch(_){} if(micEl){ try{ micEl.srcObject=null; micEl.remove(); }catch(_){} micEl=null; } micSrc=analyser=pitchBuf=null; curPitchMidi=null; usingDC=false; dcHz=-1; }
 function updateMicWarn(){ const w=$('micWarn'); if(w) w.classList.toggle('hidden',micLive); }
 function detectPitch(buf,rate){ let rms=0; for(let i=0;i<buf.length;i++) rms+=buf[i]*buf[i]; rms=Math.sqrt(rms/buf.length); if(rms<0.008) return -1;
   let r1=0,r2=buf.length-1,th=0.2; for(let i=0;i<buf.length/2;i++){ if(Math.abs(buf[i])<th){ r1=i; break; } } for(let i=1;i<buf.length/2;i++){ if(Math.abs(buf[buf.length-i])<th){ r2=buf.length-i; break; } }

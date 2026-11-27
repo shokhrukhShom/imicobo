@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>iMicobo · Phone Mic</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#0a0c10">
+<style>
+  :root{--bg:#0a0c10;--panel:#141922;--panel2:#1b2230;--line:#2a3340;--ink:#e8eef5;--dim:#8593a5;
+    --accent:#5eead4;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--mono:ui-monospace,Menlo,monospace}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center;padding:26px;-webkit-tap-highlight-color:transparent}
+  .wrap{width:min(420px,100%);text-align:center}
+  .brand{font-size:13px;letter-spacing:3px;text-transform:uppercase;color:var(--dim);margin-bottom:6px}
+  h1{font-size:25px;font-weight:650;margin:0 0 6px}
+  .sub{color:var(--dim);font-size:14px;margin:0 0 22px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:26px 22px}
+  label{display:block;text-align:left;color:var(--dim);font-size:13px;margin:12px 2px 6px}
+  input[type=text]{width:100%;background:#0a0d12;color:var(--ink);border:1px solid var(--line);border-radius:11px;padding:13px;font:600 20px var(--mono);letter-spacing:4px;text-align:center}
+  input.name{font:600 15px inherit;letter-spacing:0}
+  button{width:100%;margin-top:16px;font:600 16px inherit;border:none;border-radius:12px;padding:14px;cursor:pointer;background:var(--accent);color:#06231f}
+  button:disabled{opacity:.4}
+  button.ghost{background:var(--panel2);color:var(--ink);border:1px solid var(--line)}
+  .err{color:var(--warn);font-size:13.5px;margin-top:12px;min-height:18px}
+  .live{display:none}.live.show{display:block}.form.hide{display:none}
+  .mic-ring{width:150px;height:150px;border-radius:50%;margin:8px auto 10px;display:grid;place-items:center;background:rgba(94,234,212,.15);font-size:58px;cursor:pointer;user-select:none;transition:.15s}
+  .mic-ring.muted{background:rgba(130,140,160,.18)}
+  .note{font:800 34px var(--mono);color:var(--accent);min-height:42px;margin:4px 0}
+  .note.off{color:var(--dim)}
+  .meter{height:12px;background:#080a0e;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:14px 0}
+  .meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),#22d3ee);transition:width .06s linear}
+  .state{color:var(--dim);font-size:14px;margin-top:6px}.state b{color:var(--ok)}
+  .tag{display:inline-block;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#06231f;background:var(--accent);border-radius:999px;padding:2px 8px;font-weight:800;margin-left:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">iMicobo</div>
+  <h1 id="title">Sing from this phone <span class="tag">beta</span></h1>
+  <p class="sub">This device becomes the microphone — it listens and sends your notes to the screen.</p>
+  <div class="card">
+    <div class="form" id="form">
+      <label for="code">Code shown on the screen</label>
+      <input type="text" id="code" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="off">
+      <label for="name">Your name (optional)</label>
+      <input type="text" id="name" class="name" placeholder="e.g. Alex" maxlength="24" autocomplete="off">
+      <button id="joinBtn" onclick="join()">Start singing</button>
+      <div class="err" id="err"></div>
+    </div>
+    <div class="live" id="live">
+      <div class="mic-ring" id="ring" onclick="toggleMute()">🎤</div>
+      <div class="note off" id="note">—</div>
+      <div class="meter"><i id="meter"></i></div>
+      <div class="state" id="state">Connecting…</div>
+      <button class="ghost" onclick="leave()">Leave</button>
+    </div>
+  </div>
+</div>
+<script>
+const CFG={iceServers:[{urls:'stun:stun.l.google.com:19302'}]};
+const $=id=>document.getElementById(id);
+let pc=null, dc=null, stream=null, code=null, micID=null, muted=false;
+let ac=null, an=null, buf=null, hist=[], sendTimer=null, meterTimer=null;
+
+$('code').addEventListener('input',e=>{ e.target.value=e.target.value.replace(/\D/g,'').slice(0,6); });
+const q=new URLSearchParams(location.search).get('c'); if(q) $('code').value=q.replace(/\D/g,'').slice(0,6);
+
+async function join(){
+  code=$('code').value.trim();
+  if(code.length<4){ $('err').textContent='Enter the code from the screen.'; return; }
+  $('joinBtn').disabled=true; $('err').textContent='';
+  const name=encodeURIComponent($('name').value.trim());
+  try{
+    const j=await (await fetch(`/join?code=${code}&name=${name}`,{method:'POST'})).json();
+    if(!j.mic){ $('err').textContent=j.error||"That code isn't valid."; $('joinBtn').disabled=false; return; }
+    micID=j.mic;
+    stream=await navigator.mediaDevices.getUserMedia({audio:{
+      echoCancellation:false, noiseSuppression:false, autoGainControl:true, channelCount:1, sampleRate:48000 }});
+    pc=new RTCPeerConnection(CFG);
+    stream.getTracks().forEach(t=>pc.addTrack(t,stream));
+    dc=pc.createDataChannel('pitch');           // phone → screen: the detected note
+    dc.onopen=()=>{ $('state').innerHTML='You are <b>live</b> — sing!'; };
+    pc.onconnectionstatechange=()=>{ const s=pc.connectionState;
+      if(s==='connected'){ startPitch(); meter(); }
+      else if(s==='failed'){ $('state').textContent='Connection failed — try again.'; }
+      else if(s==='disconnected'){ $('state').textContent='Reconnecting…'; } };
+    $('form').classList.add('hide'); $('live').classList.add('show'); $('title').textContent='Microphone';
+    const offer=await pc.createOffer(); offer.sdp=tuneOpus(offer.sdp); await pc.setLocalDescription(offer);
+    await iceDone(pc);
+    await fetch(`/offer?code=${code}&mic=${micID}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pc.localDescription)});
+    for(let i=0;i<60;i++){ const d=await (await fetch(`/answer?code=${code}&mic=${micID}`)).json();
+      if(d.sdp){ await pc.setRemoteDescription(JSON.parse(d.sdp)); break; } await new Promise(r=>setTimeout(r,300)); }
+  }catch(e){ $('err').textContent='Could not reach the screen. Check the code and your connection.'; $('joinBtn').disabled=false; $('form').classList.remove('hide'); $('live').classList.remove('show'); }
+}
+
+/* ---- local pitch detection on the RAW mic, sent over the data channel ---- */
+function startPitch(){
+  try{
+    ac=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
+    const src=ac.createMediaStreamSource(stream); an=ac.createAnalyser(); an.fftSize=2048; an.smoothingTimeConstant=0;
+    buf=new Float32Array(an.fftSize); src.connect(an);
+  }catch(e){ return; }
+  sendTimer=setInterval(()=>{
+    if(!an) return; an.getFloatTimeDomainData(buf); let hz=detectPitch(buf,ac.sampleRate);
+    if(hz>0){ hist.push(hz); if(hist.length>5) hist.shift(); const s=[...hist].sort((a,b)=>a-b); hz=s[s.length>>1]; } else hist.length=0;
+    const n=$('note');
+    if(hz>0&&!muted){ n.textContent=noteName(hz); n.classList.remove('off'); } else { n.textContent='—'; n.classList.add('off'); }
+    if(dc&&dc.readyState==='open') dc.send(String((hz>0&&!muted)?hz:-1));
+  }, 45);                                        // ~22 notes/sec, smoothed on-device
+}
+function noteName(hz){ const m=Math.round(69+12*Math.log2(hz/440)); const N=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  return N[((m%12)+12)%12]+(Math.floor(m/12)-1); }
+
+function detectPitch(b,rate){ let rms=0; for(let i=0;i<b.length;i++) rms+=b[i]*b[i]; rms=Math.sqrt(rms/b.length); if(rms<0.008) return -1;
+  let r1=0,r2=b.length-1,th=0.2; for(let i=0;i<b.length/2;i++){ if(Math.abs(b[i])<th){ r1=i; break; } } for(let i=1;i<b.length/2;i++){ if(Math.abs(b[b.length-i])<th){ r2=b.length-i; break; } }
+  const bb=b.slice(r1,r2),n=bb.length,c=new Float32Array(n); for(let lag=0;lag<n;lag++){ let s=0; for(let i=0;i<n-lag;i++) s+=bb[i]*bb[i+lag]; c[lag]=s; }
+  let d=0; while(d<n-1&&c[d]>c[d+1]) d++; let mv=-1,mp=-1; for(let i=d;i<n;i++){ if(c[i]>mv){ mv=c[i]; mp=i; } } if(mp<=0) return -1;
+  let T=mp; const x1=c[mp-1]||0,x2=c[mp],x3=c[mp+1]||0,a=(x1+x3-2*x2)/2,bq=(x3-x1)/2; if(a) T=mp-bq/(2*a);
+  if(mv/(c[0]||1)<0.5) return -1; const f=rate/T; return (f<70||f>1100)?-1:f; }
+
+function meter(){ try{
+  const mac=ac||new (window.AudioContext||window.webkitAudioContext)(); const src=mac.createMediaStreamSource(stream), m=mac.createAnalyser(); m.fftSize=256; src.connect(m);
+  const d=new Uint8Array(m.frequencyBinCount), bar=$('meter');
+  (function draw(){ m.getByteFrequencyData(d); let s=0; for(const v of d) s+=v; bar.style.width=Math.min(100,(s/d.length)*1.6)+'%'; meterTimer=requestAnimationFrame(draw); })();
+}catch(_){ } }
+
+function tuneOpus(sdp){ const m=sdp.match(/a=rtpmap:(\d+) opus/i); if(!m) return sdp; const pt=m[1];
+  return sdp.split('\r\n').flatMap(line=>{ if(line.startsWith(`a=fmtp:${pt} `)){ let l=line;
+    if(!/maxaveragebitrate=/.test(l)) l+=';maxaveragebitrate=256000'; if(!/stereo=/.test(l)) l+=';stereo=0';
+    if(!/useinbandfec=/.test(l)) l+=';useinbandfec=1'; if(!/minptime=/.test(l)) l+=';minptime=10'; return [l,`a=ptime:10`]; } return [line]; }).join('\r\n'); }
+function iceDone(pc){ return new Promise(res=>{ if(pc.iceGatheringState==='complete') return res();
+  const c=()=>{ if(pc.iceGatheringState==='complete'){ pc.removeEventListener('icegatheringstatechange',c); res(); } };
+  pc.addEventListener('icegatheringstatechange',c); setTimeout(res,3000); }); }
+
+function toggleMute(){ muted=!muted; if(stream) stream.getAudioTracks().forEach(t=>t.enabled=!muted);
+  $('ring').classList.toggle('muted',muted); $('ring').textContent=muted?'🔇':'🎤'; }
+async function leave(){ if(code&&micID){ try{ await fetch(`/cancel?code=${code}&mic=${micID}`,{method:'POST'}); }catch(_){} }
+  try{ pc&&pc.close(); }catch(_){} if(stream) stream.getTracks().forEach(t=>t.stop());
+  if(sendTimer) clearInterval(sendTimer); if(meterTimer) cancelAnimationFrame(meterTimer); location.reload(); }
+</script>
+</body>
+</html>
