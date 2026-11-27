@@ -514,22 +514,20 @@ function drawLane(t){
     for(let i=1;i<trail.length;i++){ const a=trail[i-1],b=trail[i]; const ax=xOf(a.t),bx=xOf(b.t);
       if(bx<x0||ax>W) continue; g.strokeStyle=b.good?'#4ade80':'rgba(255,255,255,.8)';
       g.beginPath(); g.moveTo(Math.max(x0,ax),yOf(clampLane(a.midi))); g.lineTo(Math.max(x0,bx),yOf(clampLane(b.midi))); g.stroke(); } }
-  // ---- Dila the croc: jumps on the bars while you sing, stands still when you don't ----
+  // ---- Dila the croc: jumps UP to the notes, floats DOWN to the ground (never teleports) ----
   if(!reviewMode){
     const SH=Math.max(44,Math.min(84,H*0.4)), ok=i=>i&&i.complete&&i.naturalWidth>0;
-    if(curPitchMidi!=null){
-      // ride the NOTE BARS (clean, note-rate motion), not the jittery raw voice line
-      const ty = act ? yOf(clampLane(act.midi)) : (dilaY!=null?dilaY:yOf((laneLo+laneHi)/2));
-      dilaY=(dilaY==null)?ty:dilaY+(ty-dilaY)*0.09;                     // glide between bars
-      const bob=good?Math.max(0,Math.sin(performance.now()/240))*12     // bigger hop when you're nailing it
-                    :Math.max(0,Math.sin(performance.now()/360))*4;     // tiny idle hop otherwise
-      if(ok(dilaJump)){ const w=SH*dilaJump.naturalWidth/dilaJump.naturalHeight; g.drawImage(dilaJump, nowX-w/2, dilaY-SH-bob, w, SH); }
-      else { g.fillStyle=good?'#4ade80':'#fff'; g.shadowColor=g.fillStyle; g.shadowBlur=14; g.beginPath(); g.arc(nowX,dilaY,8,0,Math.PI*2); g.fill(); g.shadowBlur=0; }
-    } else {
-      dilaY=null; const y=H-4;                                           // standing on the floor
-      if(ok(dilaStill)){ const w=SH*dilaStill.naturalWidth/dilaStill.naturalHeight; g.drawImage(dilaStill, nowX-w/2, y-SH, w, SH); }
-      else { g.fillStyle='rgba(255,255,255,.5)'; g.beginPath(); g.arc(nowX,y-8,6,0,Math.PI*2); g.fill(); }
-    }
+    const groundY=H-4, singing=curPitchMidi!=null;
+    // where her feet want to be: on the current note bar while singing, else the ground
+    let targetY = singing ? (act ? yOf(clampLane(act.midi)) : (dilaY!=null?dilaY:yOf((laneLo+laneHi)/2))) : groundY;
+    if(dilaY==null) dilaY=groundY;                                       // start standing
+    dilaY += (targetY - dilaY) * (singing ? 0.14 : 0.055);              // jump up quicker, float down slowly
+    const landed = !singing && Math.abs(dilaY-groundY)<6;               // back on the ground?
+    const bob = singing ? (good?Math.max(0,Math.sin(performance.now()/240))*12
+                               :Math.max(0,Math.sin(performance.now()/360))*4) : 0;
+    const img = landed ? dilaStill : dilaJump;                          // still only once she lands
+    if(ok(img)){ const w=SH*img.naturalWidth/img.naturalHeight; g.drawImage(img, nowX-w/2, dilaY-SH-bob, w, SH); }
+    else { g.fillStyle=good?'#4ade80':(singing?'#fff':'rgba(255,255,255,.5)'); g.shadowColor=g.fillStyle; g.shadowBlur=12; g.beginPath(); g.arc(nowX,dilaY-6,7,0,Math.PI*2); g.fill(); g.shadowBlur=0; }
   }
   for(const e of embers){ g.globalAlpha=Math.max(0,e.life); g.fillStyle=e.c; g.fillRect(e.x,e.y,e.r,e.r); } g.globalAlpha=1;
 }
