@@ -76,6 +76,12 @@
   .loading .lt{color:var(--dim);font-size:15px}
   .reviewBar{position:absolute;top:12px;left:16px;z-index:21;display:none;align-items:center}
   .reviewBar.show{display:flex}
+  /* sing higher/lower cue, just under the pitch track */
+  .guide{position:absolute;top:calc(var(--pitchH) + 10px);left:50%;transform:translateX(-50%);z-index:5;
+    font:800 clamp(18px,2.4vw,30px)/1 inherit;padding:9px 18px;border-radius:999px;background:rgba(0,0,0,.42);
+    opacity:0;transition:opacity .1s;pointer-events:none;white-space:nowrap}
+  .guide.show{opacity:.92}
+  .guide.hi{color:#8ecbff}.guide.lo{color:#ffd27a}.guide.ok{color:var(--ok)}
   .countdown{position:absolute;left:0;right:0;top:var(--pitchH);bottom:0;display:none;align-items:center;justify-content:center;z-index:6;
     font:900 clamp(60px,11vw,120px) var(--mono);color:var(--accent);text-shadow:0 8px 40px rgba(0,0,0,.85)}
   .countdown.show{display:flex}
@@ -152,6 +158,7 @@
       <div class="bg-dim"></div>
       <div class="scoreBadge"><div class="n" id="scoreVal">0</div><div class="c" id="combo"></div></div>
       <div class="micwarn hidden" id="micWarn">Phone dropped — reconnect it to be scored</div>
+      <div class="guide" id="guide"></div>
       <div class="karaoke" id="karaoke"></div>
       <canvas class="pitch" id="lane"></canvas>
       <div class="countdown" id="countdown"></div>
@@ -346,7 +353,7 @@ function resetGameState(){
   pitchHist=[]; trail=[]; prevActive=null; embers=[]; pitchData.notes.forEach(n=>n.hit=0);
   $('scoreVal').textContent='0'; $('combo').textContent=''; $('refNote').textContent='';
   $('refBtn').classList.remove('on'); $('refBtn').textContent='🎧 Hear original';
-  $('playBtn').textContent='▶'; $('seek').value=0; const K=$('karaoke'); if(K) K.innerHTML=''; $('countdown').classList.remove('show'); updateTime();
+  $('playBtn').textContent='▶'; $('seek').value=0; const K=$('karaoke'); if(K) K.innerHTML=''; $('countdown').classList.remove('show'); $('guide').className='guide'; updateTime();
   try{ instrAudio.currentTime=0; origAudio.currentTime=0; }catch(_){}
 }
 function songTime(){ const a=referenceMode?origAudio:instrAudio; return a?a.currentTime:0; }
@@ -357,7 +364,7 @@ function startPlay(){ started=true; finished=false; referenceMode=false; $('resu
   try{ $('bgVid').play().catch(()=>{}); }catch(_){} instrAudio.play().catch(refreshSoundGate); playing=true; $('playBtn').textContent='⏸';
   lastT=performance.now()/1000; showControls(); setTimeout(refreshSoundGate,250); loop(); }
 function pausePlay(){ playing=false; $('playBtn').textContent='▶';
-  try{ instrAudio.pause(); origAudio.pause(); }catch(_){} cancelAnimationFrame(rafId); rafId=null; showControls(); }
+  try{ instrAudio.pause(); origAudio.pause(); }catch(_){} cancelAnimationFrame(rafId); rafId=null; $('guide').className='guide'; showControls(); }
 function restartSong(){ pausePlay(); resetGameState(); drawLane(0); togglePlay(); }
 
 function skip(d){ const t=Math.max(0,Math.min((instrAudio.duration||1e9),songTime()+d));
@@ -381,13 +388,11 @@ function loop(){
   rafId=requestAnimationFrame(loop);
   const now=performance.now()/1000; let dt=now-lastT; lastT=now; if(dt>0.1) dt=0.1;
   const t=songTime()-(pitchData.offset||0)-LAT;
-  let sMidi=null;
-  if(usingDC){                                   // phone already detected + smoothed the note
-    if(performance.now()-dcAt<250 && dcHz>0) sMidi=hzToMidi(dcHz);
-  } else if(analyser&&pitchBuf){                  // fallback: detect from the received audio
-    analyser.getFloatTimeDomainData(pitchBuf); const hz=detectPitch(pitchBuf,actx.sampleRate);
-    if(hz>0){ pitchHist.push(hzToMidi(hz)); if(pitchHist.length>SMOOTH) pitchHist.shift(); const s=[...pitchHist].sort((a,b)=>a-b); sMidi=s[s.length>>1]; } else pitchHist.length=0;
-  }
+  let hz=-1;
+  if(usingDC){ hz=(performance.now()-dcAt<250 && dcHz>0)?dcHz:-1; }       // phone-side note
+  else if(analyser&&pitchBuf){ analyser.getFloatTimeDomainData(pitchBuf); hz=detectPitch(pitchBuf,actx.sampleRate); }
+  let sMidi=null;                                 // smooth BOTH sources here → steadier line + hint
+  if(hz>0){ pitchHist.push(hzToMidi(hz)); if(pitchHist.length>SMOOTH) pitchHist.shift(); const s=[...pitchHist].sort((a,b)=>a-b); sMidi=s[s.length>>1]; } else pitchHist.length=0;
   curPitchMidi=sMidi;
   let active=null; const ns=pitchData.notes;
   for(let i=0;i<ns.length;i++){ const n=ns[i]; if(t>=n.t&&t<n.t+n.dur){ active=n; break; } if(n.t>t) break; }
@@ -405,6 +410,13 @@ function loop(){
     const dm = good ? active.midi : foldNear(sMidi,ref);
     trail.push({t,midi:clampLane(dm),good}); }
   /* keep the whole traced line on screen (no trimming) */
+  // sing-higher / sing-lower hint for the current note
+  const guide=$('guide');
+  if(active && sMidi!=null){ const d=foldNear(sMidi,active.midi)-active.midi;
+    if(Math.abs(d)<=TOL){ guide.textContent='✓ On pitch'; guide.className='guide show ok'; }
+    else if(d<0){ guide.textContent='⬆ Sing higher'; guide.className='guide show hi'; }
+    else { guide.textContent='⬇ Sing lower'; guide.className='guide show lo'; }
+  } else guide.className='guide';
   updateCue(t); updateLyrics(t); updateTime(); drawLane(t);
 }
 function semitoneDiff(a,b){ let d=Math.abs(a-b)%12; return Math.min(d,12-d); }
@@ -428,12 +440,12 @@ function updateCue(t){ let num=0; if(playing&&!referenceMode){ for(const c of cu
 
 /* ---- review: whole performance on one screen ---- */
 function enterReview(){ reviewMode=true; $('resultOverlay').classList.add('hidden');
-  const K=$('karaoke'); if(K) K.innerHTML=''; $('reviewBar').classList.add('show'); drawLane(0); }
+  const K=$('karaoke'); if(K) K.innerHTML=''; $('guide').className='guide'; $('reviewBar').classList.add('show'); drawLane(0); }
 function exitReview(){ reviewMode=false; $('reviewBar').classList.remove('show'); $('resultOverlay').classList.remove('hidden'); }
 
 function onSongEnded(){ if(!referenceMode) finishSong(); }
 function finishSong(){ playing=false; finished=true; $('playBtn').textContent='▶'; cancelAnimationFrame(rafId); rafId=null;
-  try{ instrAudio.pause(); origAudio.pause(); }catch(_){} showControls(); showResults(); }
+  try{ instrAudio.pause(); origAudio.pause(); }catch(_){} $('guide').className='guide'; showControls(); showResults(); }
 function singerTitle(pct){
   if(pct>=93) return ["Certified Vocal Legend","👑"]; if(pct>=85) return ["Rihanna's Lost Cousin","🎤"];
   if(pct>=76) return ["Secretly Talented","🤫"]; if(pct>=66) return ["Football Stadium Chanter","📣"];
@@ -521,7 +533,12 @@ function drawLane(t){
   // ---- live dot (no vertical playhead line) ----
   if(!reviewMode && curPitchMidi!=null){ const ref=act?act.midi:(laneLo+laneHi)/2;
     const dm=good?act.midi:foldNear(curPitchMidi,ref); const y=yOf(clampLane(dm));
-    g.fillStyle=good?'#4ade80':'#fff'; g.shadowColor=g.fillStyle; g.shadowBlur=good?18:14; g.beginPath(); g.arc(nowX,y,good?9:7,0,Math.PI*2); g.fill(); g.shadowBlur=0; }
+    g.fillStyle=good?'#4ade80':'#fff'; g.shadowColor=g.fillStyle; g.shadowBlur=good?18:14; g.beginPath(); g.arc(nowX,y,good?9:7,0,Math.PI*2); g.fill(); g.shadowBlur=0;
+    if(act && !good){                                   // arrow at the dot pointing toward the target bar
+      const ty=yOf(clampLane(act.midi)), up=ty<y, ax=nowX, sy=up?y-13:y+13;
+      g.fillStyle=up?'#8ecbff':'#ffd27a'; g.beginPath();
+      g.moveTo(ax,up?sy-7:sy+7); g.lineTo(ax-6,sy); g.lineTo(ax+6,sy); g.closePath(); g.fill(); }
+  }
   for(const e of embers){ g.globalAlpha=Math.max(0,e.life); g.fillStyle=e.c; g.fillRect(e.x,e.y,e.r,e.r); } g.globalAlpha=1;
 }
 function activeNoteAt(t){ for(const n of pitchData.notes){ if(t>=n.t&&t<n.t+n.dur) return n; if(n.t>t) break; } return null; }
