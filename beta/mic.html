@@ -77,7 +77,7 @@ async function join(){
     if(!j.mic){ $('err').textContent=j.error||"That code isn't valid."; $('joinBtn').disabled=false; return; }
     micID=j.mic;
     stream=await navigator.mediaDevices.getUserMedia({audio:{
-      echoCancellation:false, noiseSuppression:false, autoGainControl:true, channelCount:1, sampleRate:48000 }});
+      echoCancellation:false, noiseSuppression:false, autoGainControl:false, channelCount:1, sampleRate:48000 }});
     pc=new RTCPeerConnection(CFG);
     stream.getTracks().forEach(t=>pc.addTrack(t,stream));
     dc=pc.createDataChannel('pitch');           // phone → screen: the detected note
@@ -105,13 +105,24 @@ function startAudioAnalysis(){
     const src=ac.createMediaStreamSource(stream); an=ac.createAnalyser(); an.fftSize=2048; an.smoothingTimeConstant=0;
     buf=new Float32Array(an.fftSize); src.connect(an);
   }catch(e){ return; }
-  // pitch: light detector, ~16/sec — won't starve the audio pipeline
+  // pitch: light detector, ~16/sec — won't starve the audio pipeline.
+  // Gate: only react to singing that's clearly LOUDER than the room, and require
+  // it to hold for a couple of frames so brief blips / background don't trigger.
+  let floor=0.012, voiced=0;
   sendTimer=setInterval(()=>{
-    if(!an) return; an.getFloatTimeDomainData(buf); let hz=detectPitchFast(buf,ac.sampleRate);
-    if(hz>0){ hist.push(hz); if(hist.length>5) hist.shift(); const s=[...hist].sort((a,b)=>a-b); hz=s[s.length>>1]; } else hist.length=0;
+    if(!an) return; an.getFloatTimeDomainData(buf);
+    let rms=0; for(let i=0;i<buf.length;i++) rms+=buf[i]*buf[i]; rms=Math.sqrt(rms/buf.length);
+    floor = rms < floor ? rms*0.5+floor*0.5 : floor*0.995 + rms*0.005;   // adaptive room-noise floor
+    const strong = rms > Math.max(0.02, floor*4.5);                      // voice must beat the room
+    let hz = strong ? detectPitchFast(buf,ac.sampleRate) : -1;
+    if(strong && hz>0) voiced = Math.min(voiced+2, 8); else voiced = Math.max(voiced-1, 0);
+    let out=-1;
+    if(voiced>=3 && hz>0 && !muted){                                     // sustained, real singing
+      hist.push(hz); if(hist.length>5) hist.shift(); const s=[...hist].sort((a,b)=>a-b); out=s[s.length>>1];
+    } else hist.length=0;
     const n=$('note');
-    if(hz>0&&!muted){ n.textContent=noteName(hz); n.classList.remove('off'); } else { n.textContent='—'; n.classList.add('off'); }
-    if(dc&&dc.readyState==='open') dc.send(String((hz>0&&!muted)?hz:-1));
+    if(out>0){ n.textContent=noteName(out); n.classList.remove('off'); } else { n.textContent='—'; n.classList.add('off'); }
+    if(dc&&dc.readyState==='open') dc.send(String(out>0?out:-1));
   }, 60);
   // meter reuses the SAME analyser (no second AudioContext)
   const md=new Uint8Array(an.frequencyBinCount), bar=$('meter');
