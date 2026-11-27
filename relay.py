@@ -412,10 +412,14 @@ def verify_google_token(cred):
     return email or None
 
 # ---- beta: the singing-game song catalog -------------------------------------
-# Each song lives in its own folder under beta/songs/<slug>/ and must carry all
-# four files (matched by suffix). A song shows up in the game ONLY when all four
-# are present, so a half-uploaded song never appears half-broken.
+# Each song lives in its own folder under beta/songs/<slug>/ with FIXED filenames:
+#   backing.mp3   original.mp3   pitch.json   lyrics.lrc   (+ optional title.txt)
+# A song shows up ONLY when all four required files are present, so a half-uploaded
+# song never appears half-broken. The old "<name>-instrument.mp3" style is still
+# accepted as a fallback so existing songs keep working.
 BETA_DIR = os.environ.get("BETA_DIR", "beta")
+BETA_FIXED = {"instrument": "backing.mp3", "original": "original.mp3",
+              "pitch": "pitch.json", "lyrics": "lyrics.lrc"}
 BETA_SUFFIXES = {"instrument": "-instrument.mp3", "original": "-original.mp3",
                  "pitch": "-pitch.json", "lyrics": "-lyrics.lrc"}
 
@@ -435,22 +439,30 @@ def beta_scan_songs():
         except OSError:
             continue
         found, fnames = {}, {}
-        for kind, suf in BETA_SUFFIXES.items():
-            match = next((f for f in files if f.endswith(suf)), None)
+        for kind in BETA_FIXED:
+            fixed, suf = BETA_FIXED[kind], BETA_SUFFIXES[kind]
+            match = fixed if fixed in files else next((f for f in files if f.endswith(suf)), None)
             if match:
                 fnames[kind] = match
                 found[kind] = "/" + "/".join(
                     quote(x) for x in (BETA_DIR, "songs", slug, match))
         if len(found) != 4:
             continue  # must have all four to be playable
+        # title: title.txt first, then a "song"/"title" field in pitch.json, then the folder name
         title = None
         try:
-            with open(os.path.join(d, fnames["pitch"]), "r", encoding="utf-8") as pf:
-                meta = json.load(pf)
-            if isinstance(meta, dict):
-                title = meta.get("song") or meta.get("title")
+            with open(os.path.join(d, "title.txt"), "r", encoding="utf-8") as tf:
+                title = tf.read().strip().splitlines()[0].strip() or None
         except Exception:
             pass
+        if not title:
+            try:
+                with open(os.path.join(d, fnames["pitch"]), "r", encoding="utf-8") as pf:
+                    meta = json.load(pf)
+                if isinstance(meta, dict):
+                    title = meta.get("song") or meta.get("title")
+            except Exception:
+                pass
         if not title:
             title = slug.replace("_", " ").replace("-", " ").strip().title()
         out.append({"id": slug, "title": title,
