@@ -518,9 +518,9 @@ function drawLane(t){
   if(!reviewMode){
     const SH=Math.max(44,Math.min(84,H*0.4)), ok=i=>i&&i.complete&&i.naturalWidth>0;
     if(curPitchMidi!=null){
-      const ref=act?act.midi:(laneLo+laneHi)/2, dm=good?act.midi:foldNear(curPitchMidi,ref), ty=yOf(clampLane(dm));
-      dilaY=(dilaY==null)?ty:dilaY+(ty-dilaY)*0.12;                      // ease toward the note — no fast twitching
-      const bob=good?Math.max(0,Math.sin(performance.now()/190))*11:0;  // slow, gentle hop only when on pitch
+      const ref=act?act.midi:(laneLo+laneHi)/2, ty=yOf(clampLane(foldNear(curPitchMidi,ref)));
+      dilaY=(dilaY==null)?ty:dilaY+(ty-dilaY)*0.07;                      // slow glide; follows your voice, never snaps
+      const bob=good?Math.max(0,Math.sin(performance.now()/230))*10:0;  // slow, gentle hop when on pitch
       if(ok(dilaJump)){ const w=SH*dilaJump.naturalWidth/dilaJump.naturalHeight; g.drawImage(dilaJump, nowX-w/2, dilaY-SH-bob, w, SH); }
       else { g.fillStyle=good?'#4ade80':'#fff'; g.shadowColor=g.fillStyle; g.shadowBlur=14; g.beginPath(); g.arc(nowX,dilaY,8,0,Math.PI*2); g.fill(); g.shadowBlur=0; }
     } else {
