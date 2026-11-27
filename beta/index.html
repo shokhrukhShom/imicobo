@@ -76,12 +76,6 @@
   .loading .lt{color:var(--dim);font-size:15px}
   .reviewBar{position:absolute;top:12px;left:16px;z-index:21;display:none;align-items:center}
   .reviewBar.show{display:flex}
-  /* sing higher/lower cue, just under the pitch track */
-  .guide{position:absolute;top:calc(var(--pitchH) + 10px);left:50%;transform:translateX(-50%);z-index:5;
-    font:800 clamp(18px,2.4vw,30px)/1 inherit;padding:9px 18px;border-radius:999px;background:rgba(0,0,0,.42);
-    opacity:0;transition:opacity .1s;pointer-events:none;white-space:nowrap}
-  .guide.show{opacity:.92}
-  .guide.hi{color:#8ecbff}.guide.lo{color:#ffd27a}.guide.ok{color:var(--ok)}
   .countdown{position:absolute;left:0;right:0;top:var(--pitchH);bottom:0;display:none;align-items:center;justify-content:center;z-index:6;
     font:900 clamp(60px,11vw,120px) var(--mono);color:var(--accent);text-shadow:0 8px 40px rgba(0,0,0,.85)}
   .countdown.show{display:flex}
@@ -158,7 +152,6 @@
       <div class="bg-dim"></div>
       <div class="scoreBadge"><div class="n" id="scoreVal">0</div><div class="c" id="combo"></div></div>
       <div class="micwarn hidden" id="micWarn">Phone dropped — reconnect it to be scored</div>
-      <div class="guide" id="guide"></div>
       <div class="karaoke" id="karaoke"></div>
       <canvas class="pitch" id="lane"></canvas>
       <div class="countdown" id="countdown"></div>
@@ -185,9 +178,7 @@
 
       <div class="resultOverlay hidden" id="resultOverlay">
         <div class="resultCard">
-          <div class="rgrade" id="rGrade">A</div>
           <div class="rscore">You scored <span id="rScore">0</span>!</div>
-          <div class="rcat" id="rCat">🚿 Shower Room Superstar</div>
           <div class="rstats" id="rStats"></div>
           <div class="rbtns">
             <button class="btn" style="background:var(--accent);color:#06231f" onclick="restartSong()">↻ Sing again</button>
@@ -353,7 +344,7 @@ function resetGameState(){
   pitchHist=[]; trail=[]; prevActive=null; embers=[]; pitchData.notes.forEach(n=>n.hit=0);
   $('scoreVal').textContent='0'; $('combo').textContent=''; $('refNote').textContent='';
   $('refBtn').classList.remove('on'); $('refBtn').textContent='🎧 Hear original';
-  $('playBtn').textContent='▶'; $('seek').value=0; const K=$('karaoke'); if(K) K.innerHTML=''; $('countdown').classList.remove('show'); $('guide').className='guide'; updateTime();
+  $('playBtn').textContent='▶'; $('seek').value=0; const K=$('karaoke'); if(K) K.innerHTML=''; $('countdown').classList.remove('show'); updateTime();
   try{ instrAudio.currentTime=0; origAudio.currentTime=0; }catch(_){}
 }
 function songTime(){ const a=referenceMode?origAudio:instrAudio; return a?a.currentTime:0; }
@@ -364,7 +355,7 @@ function startPlay(){ started=true; finished=false; referenceMode=false; $('resu
   try{ $('bgVid').play().catch(()=>{}); }catch(_){} instrAudio.play().catch(refreshSoundGate); playing=true; $('playBtn').textContent='⏸';
   lastT=performance.now()/1000; showControls(); setTimeout(refreshSoundGate,250); loop(); }
 function pausePlay(){ playing=false; $('playBtn').textContent='▶';
-  try{ instrAudio.pause(); origAudio.pause(); }catch(_){} cancelAnimationFrame(rafId); rafId=null; $('guide').className='guide'; showControls(); }
+  try{ instrAudio.pause(); origAudio.pause(); }catch(_){} cancelAnimationFrame(rafId); rafId=null; showControls(); }
 function restartSong(){ pausePlay(); resetGameState(); drawLane(0); togglePlay(); }
 
 function skip(d){ const t=Math.max(0,Math.min((instrAudio.duration||1e9),songTime()+d));
@@ -410,13 +401,6 @@ function loop(){
     const dm = good ? active.midi : foldNear(sMidi,ref);
     trail.push({t,midi:clampLane(dm),good}); }
   /* keep the whole traced line on screen (no trimming) */
-  // sing-higher / sing-lower hint for the current note
-  const guide=$('guide');
-  if(active && sMidi!=null){ const d=foldNear(sMidi,active.midi)-active.midi;
-    if(Math.abs(d)<=TOL){ guide.textContent='✓ On pitch'; guide.className='guide show ok'; }
-    else if(d<0){ guide.textContent='⬆ Sing higher'; guide.className='guide show hi'; }
-    else { guide.textContent='⬇ Sing lower'; guide.className='guide show lo'; }
-  } else guide.className='guide';
   updateCue(t); updateLyrics(t); updateTime(); drawLane(t);
 }
 function semitoneDiff(a,b){ let d=Math.abs(a-b)%12; return Math.min(d,12-d); }
@@ -440,12 +424,12 @@ function updateCue(t){ let num=0; if(playing&&!referenceMode){ for(const c of cu
 
 /* ---- review: whole performance on one screen ---- */
 function enterReview(){ reviewMode=true; $('resultOverlay').classList.add('hidden');
-  const K=$('karaoke'); if(K) K.innerHTML=''; $('guide').className='guide'; $('reviewBar').classList.add('show'); drawLane(0); }
+  const K=$('karaoke'); if(K) K.innerHTML=''; $('reviewBar').classList.add('show'); drawLane(0); }
 function exitReview(){ reviewMode=false; $('reviewBar').classList.remove('show'); $('resultOverlay').classList.remove('hidden'); }
 
 function onSongEnded(){ if(!referenceMode) finishSong(); }
 function finishSong(){ playing=false; finished=true; $('playBtn').textContent='▶'; cancelAnimationFrame(rafId); rafId=null;
-  try{ instrAudio.pause(); origAudio.pause(); }catch(_){} $('guide').className='guide'; showControls(); showResults(); }
+  try{ instrAudio.pause(); origAudio.pause(); }catch(_){} showControls(); showResults(); }
 function singerTitle(pct){
   if(pct>=93) return ["Certified Vocal Legend","👑"]; if(pct>=85) return ["Rihanna's Lost Cousin","🎤"];
   if(pct>=76) return ["Secretly Talented","🤫"]; if(pct>=66) return ["Football Stadium Chanter","📣"];
@@ -454,15 +438,14 @@ function singerTitle(pct){
 function showResults(){
   const reached=pitchData.notes.filter(n=>n.t<=songTime()), base=reached.length?reached:pitchData.notes;
   const pct=base.length?Math.round(100*base.reduce((a,n)=>a+Math.min(1,n.hit/(n.dur*NEED)),0)/base.length):0;
-  let g='d',label='D'; if(!micLive){ g='d'; label='—'; }
-  else if(pct>=90){g='s';label='S';} else if(pct>=75){g='a';label='A';} else if(pct>=55){g='b';label='B';} else if(pct>=35){g='c';label='C';}
-  const [cat,emo]=singerTitle(micLive?pct:0);
-  $('rGrade').className='rgrade '+g; $('rGrade').textContent=label; $('rScore').textContent=Math.round(score).toLocaleString();
-  $('rCat').textContent=micLive?`${emo} You are: ${cat}`:'Connect a mic to be scored'; $('rStats').textContent=micLive?`${pct}% on pitch · best combo ${bestCombo}`:'';
+  $('rScore').textContent=Math.round(score).toLocaleString();
+  $('rStats').textContent=micLive?`${pct}% on pitch · best combo ${bestCombo}`:'No mic was connected — nothing to score.';
   $('resultOverlay').classList.remove('hidden'); if(micLive&&pct>=55){ burst(); setTimeout(burst,350); setTimeout(burst,700); }
 }
 
-/* ============================ PITCH TRACK (bottom strip) ============================ */
+/* ============================ PITCH TRACK ============================ */
+const dilaJump=new Image(); dilaJump.src='/beta/character/Dila-jump.png';     // jumping croc (singing)
+const dilaStill=new Image(); dilaStill.src='/beta/character/Dila-still.png';  // standing croc (idle)
 let laneLo=52, laneHi=74;
 function computeLaneRange(){ const ms=pitchData.notes.map(n=>n.midi).sort((a,b)=>a-b);
   if(ms.length){ const p=q=>ms[Math.min(ms.length-1,Math.max(0,Math.floor(q*ms.length)))]; laneLo=p(.05)-3; laneHi=p(.95)+3; }
@@ -530,14 +513,19 @@ function drawLane(t){
     for(let i=1;i<trail.length;i++){ const a=trail[i-1],b=trail[i]; const ax=xOf(a.t),bx=xOf(b.t);
       if(bx<x0||ax>W) continue; g.strokeStyle=b.good?'#4ade80':'rgba(255,255,255,.8)';
       g.beginPath(); g.moveTo(Math.max(x0,ax),yOf(clampLane(a.midi))); g.lineTo(Math.max(x0,bx),yOf(clampLane(b.midi))); g.stroke(); } }
-  // ---- live dot (no vertical playhead line) ----
-  if(!reviewMode && curPitchMidi!=null){ const ref=act?act.midi:(laneLo+laneHi)/2;
-    const dm=good?act.midi:foldNear(curPitchMidi,ref); const y=yOf(clampLane(dm));
-    g.fillStyle=good?'#4ade80':'#fff'; g.shadowColor=g.fillStyle; g.shadowBlur=good?18:14; g.beginPath(); g.arc(nowX,y,good?9:7,0,Math.PI*2); g.fill(); g.shadowBlur=0;
-    if(act && !good){                                   // arrow at the dot pointing toward the target bar
-      const ty=yOf(clampLane(act.midi)), up=ty<y, ax=nowX, sy=up?y-13:y+13;
-      g.fillStyle=up?'#8ecbff':'#ffd27a'; g.beginPath();
-      g.moveTo(ax,up?sy-7:sy+7); g.lineTo(ax-6,sy); g.lineTo(ax+6,sy); g.closePath(); g.fill(); }
+  // ---- Dila the croc: jumps on the bars while you sing, stands still when you don't ----
+  if(!reviewMode){
+    const SH=Math.max(44,Math.min(84,H*0.4)), ok=i=>i&&i.complete&&i.naturalWidth>0;
+    if(curPitchMidi!=null){
+      const ref=act?act.midi:(laneLo+laneHi)/2, dm=good?act.midi:foldNear(curPitchMidi,ref), y=yOf(clampLane(dm));
+      const bob=Math.abs(Math.sin(performance.now()/95))*(good?14:7);   // jumping
+      if(ok(dilaJump)){ const w=SH*dilaJump.naturalWidth/dilaJump.naturalHeight; g.drawImage(dilaJump, nowX-w/2, y-SH-bob, w, SH); }
+      else { g.fillStyle=good?'#4ade80':'#fff'; g.shadowColor=g.fillStyle; g.shadowBlur=14; g.beginPath(); g.arc(nowX,y,8,0,Math.PI*2); g.fill(); g.shadowBlur=0; }
+    } else {
+      const y=H-4;                                                       // standing on the floor
+      if(ok(dilaStill)){ const w=SH*dilaStill.naturalWidth/dilaStill.naturalHeight; g.drawImage(dilaStill, nowX-w/2, y-SH, w, SH); }
+      else { g.fillStyle='rgba(255,255,255,.5)'; g.beginPath(); g.arc(nowX,y-8,6,0,Math.PI*2); g.fill(); }
+    }
   }
   for(const e of embers){ g.globalAlpha=Math.max(0,e.life); g.fillStyle=e.c; g.fillRect(e.x,e.y,e.r,e.r); } g.globalAlpha=1;
 }
