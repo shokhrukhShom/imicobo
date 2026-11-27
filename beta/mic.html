@@ -62,7 +62,7 @@
 const CFG={iceServers:[{urls:'stun:stun.l.google.com:19302'}]};
 const $=id=>document.getElementById(id);
 let pc=null, dc=null, stream=null, code=null, micID=null, muted=false;
-let ac=null, an=null, buf=null, hist=[], sendTimer=null, meterTimer=null;
+let ac=null, an=null, buf=null, hist=[], sendTimer=null, meterRAF=null;
 
 $('code').addEventListener('input',e=>{ e.target.value=e.target.value.replace(/\D/g,'').slice(0,6); });
 const q=new URLSearchParams(location.search).get('c'); if(q) $('code').value=q.replace(/\D/g,'').slice(0,6);
@@ -83,11 +83,14 @@ async function join(){
     dc=pc.createDataChannel('pitch');           // phone → screen: the detected note
     dc.onopen=()=>{ $('state').innerHTML='You are <b>live</b> — sing!'; };
     pc.onconnectionstatechange=()=>{ const s=pc.connectionState;
-      if(s==='connected'){ startPitch(); meter(); }
+      if(s==='connected'){ startAudioAnalysis(); }
       else if(s==='failed'){ $('state').textContent='Connection failed — try again.'; }
       else if(s==='disconnected'){ $('state').textContent='Reconnecting…'; } };
     $('form').classList.add('hide'); $('live').classList.add('show'); $('title').textContent='Microphone';
     const offer=await pc.createOffer(); offer.sdp=tuneOpus(offer.sdp); await pc.setLocalDescription(offer);
+    try{ const snd=pc.getSenders().find(s=>s.track&&s.track.kind==='audio');   // prioritize the voice (matches /mic.html)
+      if(snd){ const pr=snd.getParameters(); if(!pr.encodings||!pr.encodings.length) pr.encodings=[{}];
+        pr.encodings[0].maxBitrate=256000; pr.encodings[0].networkPriority='high'; await snd.setParameters(pr); } }catch(_){}
     await iceDone(pc);
     await fetch(`/offer?code=${code}&mic=${micID}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(pc.localDescription)});
     for(let i=0;i<60;i++){ const d=await (await fetch(`/answer?code=${code}&mic=${micID}`)).json();
@@ -95,36 +98,42 @@ async function join(){
   }catch(e){ $('err').textContent='Could not reach the screen. Check the code and your connection.'; $('joinBtn').disabled=false; $('form').classList.remove('hide'); $('live').classList.remove('show'); }
 }
 
-/* ---- local pitch detection on the RAW mic, sent over the data channel ---- */
-function startPitch(){
+/* ---- local pitch detection on the RAW mic (ONE AudioContext for pitch + meter) ---- */
+function startAudioAnalysis(){
   try{
     ac=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
     const src=ac.createMediaStreamSource(stream); an=ac.createAnalyser(); an.fftSize=2048; an.smoothingTimeConstant=0;
     buf=new Float32Array(an.fftSize); src.connect(an);
   }catch(e){ return; }
+  // pitch: light detector, ~16/sec — won't starve the audio pipeline
   sendTimer=setInterval(()=>{
-    if(!an) return; an.getFloatTimeDomainData(buf); let hz=detectPitch(buf,ac.sampleRate);
+    if(!an) return; an.getFloatTimeDomainData(buf); let hz=detectPitchFast(buf,ac.sampleRate);
     if(hz>0){ hist.push(hz); if(hist.length>5) hist.shift(); const s=[...hist].sort((a,b)=>a-b); hz=s[s.length>>1]; } else hist.length=0;
     const n=$('note');
     if(hz>0&&!muted){ n.textContent=noteName(hz); n.classList.remove('off'); } else { n.textContent='—'; n.classList.add('off'); }
     if(dc&&dc.readyState==='open') dc.send(String((hz>0&&!muted)?hz:-1));
-  }, 45);                                        // ~22 notes/sec, smoothed on-device
+  }, 60);
+  // meter reuses the SAME analyser (no second AudioContext)
+  const md=new Uint8Array(an.frequencyBinCount), bar=$('meter');
+  (function draw(){ if(!an) return; an.getByteFrequencyData(md); let s=0; for(const v of md) s+=v;
+    bar.style.width=Math.min(100,(s/md.length)*1.6)+'%'; meterRAF=requestAnimationFrame(draw); })();
 }
 function noteName(hz){ const m=Math.round(69+12*Math.log2(hz/440)); const N=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
   return N[((m%12)+12)%12]+(Math.floor(m/12)-1); }
 
-function detectPitch(b,rate){ let rms=0; for(let i=0;i<b.length;i++) rms+=b[i]*b[i]; rms=Math.sqrt(rms/b.length); if(rms<0.008) return -1;
-  let r1=0,r2=b.length-1,th=0.2; for(let i=0;i<b.length/2;i++){ if(Math.abs(b[i])<th){ r1=i; break; } } for(let i=1;i<b.length/2;i++){ if(Math.abs(b[b.length-i])<th){ r2=b.length-i; break; } }
-  const bb=b.slice(r1,r2),n=bb.length,c=new Float32Array(n); for(let lag=0;lag<n;lag++){ let s=0; for(let i=0;i<n-lag;i++) s+=bb[i]*bb[i+lag]; c[lag]=s; }
-  let d=0; while(d<n-1&&c[d]>c[d+1]) d++; let mv=-1,mp=-1; for(let i=d;i<n;i++){ if(c[i]>mv){ mv=c[i]; mp=i; } } if(mp<=0) return -1;
-  let T=mp; const x1=c[mp-1]||0,x2=c[mp],x3=c[mp+1]||0,a=(x1+x3-2*x2)/2,bq=(x3-x1)/2; if(a) T=mp-bq/(2*a);
-  if(mv/(c[0]||1)<0.5) return -1; const f=rate/T; return (f<70||f>1100)?-1:f; }
-
-function meter(){ try{
-  const mac=ac||new (window.AudioContext||window.webkitAudioContext)(); const src=mac.createMediaStreamSource(stream), m=mac.createAnalyser(); m.fftSize=256; src.connect(m);
-  const d=new Uint8Array(m.frequencyBinCount), bar=$('meter');
-  (function draw(){ m.getByteFrequencyData(d); let s=0; for(const v of d) s+=v; bar.style.width=Math.min(100,(s/d.length)*1.6)+'%'; meterTimer=requestAnimationFrame(draw); })();
-}catch(_){ } }
+/* decimate ×4 then autocorrelate only across the vocal range → ~40× cheaper than full ACF */
+function detectPitchFast(b,rate){
+  const D=4, n=(b.length/D)|0, ds=new Float32Array(n); let rms=0;
+  for(let i=0;i<n;i++){ let s=0; for(let k=0;k<D;k++) s+=b[i*D+k]; const v=s/D; ds[i]=v; rms+=v*v; }
+  rms=Math.sqrt(rms/n); if(rms<0.008) return -1;
+  const rd=rate/D, minLag=Math.max(2,(rd/1100)|0), maxLag=Math.min(n-2,(rd/70)|0);
+  let c0=0; for(let i=0;i<n;i++) c0+=ds[i]*ds[i];
+  const acf=lag=>{ let s=0; for(let i=0;i<n-lag;i++) s+=ds[i]*ds[i+lag]; return s; };
+  let best=-1,bestLag=-1; for(let lag=minLag;lag<=maxLag;lag++){ const s=acf(lag); if(s>best){ best=s; bestLag=lag; } }
+  if(bestLag<=0 || best/(c0||1)<0.5) return -1;
+  let T=bestLag; const cm=acf(bestLag-1),cc=best,cp=acf(bestLag+1),a=(cm+cp-2*cc)/2,bb=(cp-cm)/2; if(a) T=bestLag-bb/(2*a);
+  const f=rd/T; return (f<70||f>1100)?-1:f;
+}
 
 function tuneOpus(sdp){ const m=sdp.match(/a=rtpmap:(\d+) opus/i); if(!m) return sdp; const pt=m[1];
   return sdp.split('\r\n').flatMap(line=>{ if(line.startsWith(`a=fmtp:${pt} `)){ let l=line;
@@ -138,7 +147,7 @@ function toggleMute(){ muted=!muted; if(stream) stream.getAudioTracks().forEach(
   $('ring').classList.toggle('muted',muted); $('ring').textContent=muted?'🔇':'🎤'; }
 async function leave(){ if(code&&micID){ try{ await fetch(`/cancel?code=${code}&mic=${micID}`,{method:'POST'}); }catch(_){} }
   try{ pc&&pc.close(); }catch(_){} if(stream) stream.getTracks().forEach(t=>t.stop());
-  if(sendTimer) clearInterval(sendTimer); if(meterTimer) cancelAnimationFrame(meterTimer); location.reload(); }
+  if(sendTimer) clearInterval(sendTimer); if(meterRAF) cancelAnimationFrame(meterRAF); location.reload(); }
 </script>
 </body>
 </html>
