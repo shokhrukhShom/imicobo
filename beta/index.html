@@ -336,12 +336,13 @@ function buildWordTiming(all){ lrcWords=[];
 const TOL=3.0, SMOOTH=7, NEED=0.55; let LAT=0.2;   // mic latency compensation (tune with Sync slider)
 let score=0, combo=0, bestCombo=0, rafId=null, lastT=0, pitchHist=[], trail=[], curPitchMidi=null, prevActive=null, embers=[];
 let dcHz=-1, dcAt=0, usingDC=false;   // phone-side pitch over the data channel (preferred when present)
+let dilaY=null;                        // smoothed vertical position for the croc (natural glide)
 let reviewMode=false;                 // after a song: show the whole take at once
 
 function resetGameState(){
   score=0; combo=0; bestCombo=0; finished=false; playing=false; started=false; referenceMode=false; reviewMode=false;
   $('reviewBar').classList.remove('show');
-  pitchHist=[]; trail=[]; prevActive=null; embers=[]; pitchData.notes.forEach(n=>n.hit=0);
+  pitchHist=[]; trail=[]; prevActive=null; embers=[]; dilaY=null; pitchData.notes.forEach(n=>n.hit=0);
   $('scoreVal').textContent='0'; $('combo').textContent=''; $('refNote').textContent='';
   $('refBtn').classList.remove('on'); $('refBtn').textContent='🎧 Hear original';
   $('playBtn').textContent='▶'; $('seek').value=0; const K=$('karaoke'); if(K) K.innerHTML=''; $('countdown').classList.remove('show'); updateTime();
@@ -517,12 +518,13 @@ function drawLane(t){
   if(!reviewMode){
     const SH=Math.max(44,Math.min(84,H*0.4)), ok=i=>i&&i.complete&&i.naturalWidth>0;
     if(curPitchMidi!=null){
-      const ref=act?act.midi:(laneLo+laneHi)/2, dm=good?act.midi:foldNear(curPitchMidi,ref), y=yOf(clampLane(dm));
-      const bob=Math.abs(Math.sin(performance.now()/95))*(good?14:7);   // jumping
-      if(ok(dilaJump)){ const w=SH*dilaJump.naturalWidth/dilaJump.naturalHeight; g.drawImage(dilaJump, nowX-w/2, y-SH-bob, w, SH); }
-      else { g.fillStyle=good?'#4ade80':'#fff'; g.shadowColor=g.fillStyle; g.shadowBlur=14; g.beginPath(); g.arc(nowX,y,8,0,Math.PI*2); g.fill(); g.shadowBlur=0; }
+      const ref=act?act.midi:(laneLo+laneHi)/2, dm=good?act.midi:foldNear(curPitchMidi,ref), ty=yOf(clampLane(dm));
+      dilaY=(dilaY==null)?ty:dilaY+(ty-dilaY)*0.12;                      // ease toward the note — no fast twitching
+      const bob=good?Math.max(0,Math.sin(performance.now()/190))*11:0;  // slow, gentle hop only when on pitch
+      if(ok(dilaJump)){ const w=SH*dilaJump.naturalWidth/dilaJump.naturalHeight; g.drawImage(dilaJump, nowX-w/2, dilaY-SH-bob, w, SH); }
+      else { g.fillStyle=good?'#4ade80':'#fff'; g.shadowColor=g.fillStyle; g.shadowBlur=14; g.beginPath(); g.arc(nowX,dilaY,8,0,Math.PI*2); g.fill(); g.shadowBlur=0; }
     } else {
-      const y=H-4;                                                       // standing on the floor
+      dilaY=null; const y=H-4;                                           // standing on the floor
       if(ok(dilaStill)){ const w=SH*dilaStill.naturalWidth/dilaStill.naturalHeight; g.drawImage(dilaStill, nowX-w/2, y-SH, w, SH); }
       else { g.fillStyle='rgba(255,255,255,.5)'; g.beginPath(); g.arc(nowX,y-8,6,0,Math.PI*2); g.fill(); }
     }

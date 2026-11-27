@@ -112,12 +112,15 @@ function startAudioAnalysis(){
   sendTimer=setInterval(()=>{
     if(!an) return; an.getFloatTimeDomainData(buf);
     let rms=0; for(let i=0;i<buf.length;i++) rms+=buf[i]*buf[i]; rms=Math.sqrt(rms/buf.length);
-    floor = rms < floor ? rms*0.5+floor*0.5 : floor*0.995 + rms*0.005;   // adaptive room-noise floor
-    const strong = rms > Math.max(0.02, floor*4.5);                      // voice must beat the room
+    const singing = voiced>=2;
+    if(rms < floor) floor = rms*0.5+floor*0.5;            // follow a quieter room fast
+    else if(!singing) floor = floor*0.99 + rms*0.01;      // learn the room ONLY when not singing
+    // (floor is frozen while you sing, so a long held note never gates itself out)
+    const strong = rms > Math.max(0.016, floor*3.2);      // a bit more sensitive than before
     let hz = strong ? detectPitchFast(buf,ac.sampleRate) : -1;
-    if(strong && hz>0) voiced = Math.min(voiced+2, 8); else voiced = Math.max(voiced-1, 0);
+    if(strong && hz>0) voiced = Math.min(voiced+2, 12); else voiced = Math.max(voiced-1, 0);  // longer hold
     let out=-1;
-    if(voiced>=3 && hz>0 && !muted){                                     // sustained, real singing
+    if(voiced>=3 && hz>0 && !muted){                      // sustained, real singing
       hist.push(hz); if(hist.length>5) hist.shift(); const s=[...hist].sort((a,b)=>a-b); out=s[s.length>>1];
     } else hist.length=0;
     const n=$('note');
