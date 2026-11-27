@@ -74,6 +74,8 @@
   .spinner{width:56px;height:56px;border-radius:50%;border:4px solid rgba(255,255,255,.14);border-top-color:var(--accent);animation:spin 1s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   .loading .lt{color:var(--dim);font-size:15px}
+  .reviewBar{position:absolute;top:12px;left:16px;z-index:21;display:none;align-items:center}
+  .reviewBar.show{display:flex}
   .countdown{position:absolute;left:0;right:0;top:var(--pitchH);bottom:0;display:none;align-items:center;justify-content:center;z-index:6;
     font:900 clamp(60px,11vw,120px) var(--mono);color:var(--accent);text-shadow:0 8px 40px rgba(0,0,0,.85)}
   .countdown.show{display:flex}
@@ -154,6 +156,8 @@
       <canvas class="pitch" id="lane"></canvas>
       <div class="countdown" id="countdown"></div>
       <div class="loading" id="loading"><div class="spinner"></div><div class="lt">Loading song…</div></div>
+      <div class="reviewBar" id="reviewBar"><button class="btn ref" onclick="exitReview()">← Back to score</button>
+        <span style="color:var(--dim);font-size:13px;margin-left:10px">Your whole take — green = on pitch</span></div>
 
       <div class="controls" id="controls">
         <div class="crow">
@@ -180,6 +184,7 @@
           <div class="rstats" id="rStats"></div>
           <div class="rbtns">
             <button class="btn" style="background:var(--accent);color:#06231f" onclick="restartSong()">↻ Sing again</button>
+            <button class="btn ref" onclick="enterReview()">📈 Review my take</button>
             <button class="btn ref" onclick="goBack()">← Another song</button>
           </div>
         </div>
@@ -292,7 +297,7 @@ async function openSong(s){
   $('loading').classList.remove('show');
   showControls(); startPlay();                               // auto-play once loaded
 }
-function goBack(){ stopAll(); $('loading').classList.remove('show'); if(document.fullscreenElement) document.exitFullscreen().catch(()=>{}); if(!everConnected) return;
+function goBack(){ stopAll(); reviewMode=false; $('reviewBar').classList.remove('show'); $('loading').classList.remove('show'); if(document.fullscreenElement) document.exitFullscreen().catch(()=>{}); if(!everConnected) return;
   $('playerPanel').classList.add('hidden'); $('pairPanel').classList.add('hidden'); $('libraryPanel').classList.remove('hidden');
   $('hdr').innerHTML='iMicobo Sing <span class="beta-tag">beta</span>'; $('backBtn').classList.add('hidden'); }
 
@@ -333,9 +338,11 @@ function buildWordTiming(all){ lrcWords=[];
 const TOL=3.0, SMOOTH=7, NEED=0.55; let LAT=0.2;   // mic latency compensation (tune with Sync slider)
 let score=0, combo=0, bestCombo=0, rafId=null, lastT=0, pitchHist=[], trail=[], curPitchMidi=null, prevActive=null, embers=[];
 let dcHz=-1, dcAt=0, usingDC=false;   // phone-side pitch over the data channel (preferred when present)
+let reviewMode=false;                 // after a song: show the whole take at once
 
 function resetGameState(){
-  score=0; combo=0; bestCombo=0; finished=false; playing=false; started=false; referenceMode=false;
+  score=0; combo=0; bestCombo=0; finished=false; playing=false; started=false; referenceMode=false; reviewMode=false;
+  $('reviewBar').classList.remove('show');
   pitchHist=[]; trail=[]; prevActive=null; embers=[]; pitchData.notes.forEach(n=>n.hit=0);
   $('scoreVal').textContent='0'; $('combo').textContent=''; $('refNote').textContent='';
   $('refBtn').classList.remove('on'); $('refBtn').textContent='🎧 Hear original';
@@ -419,6 +426,11 @@ function updateLyrics(t){
 function updateCue(t){ let num=0; if(playing&&!referenceMode){ for(const c of cues){ if(t>=c-3&&t<c){ num=Math.ceil(c-t); break; } } }
   const el=$('countdown'); if(!el) return; if(num>0){ el.textContent=num; el.classList.add('show'); } else el.classList.remove('show'); }
 
+/* ---- review: whole performance on one screen ---- */
+function enterReview(){ reviewMode=true; $('resultOverlay').classList.add('hidden');
+  const K=$('karaoke'); if(K) K.innerHTML=''; $('reviewBar').classList.add('show'); drawLane(0); }
+function exitReview(){ reviewMode=false; $('reviewBar').classList.remove('show'); $('resultOverlay').classList.remove('hidden'); }
+
 function onSongEnded(){ if(!referenceMode) finishSong(); }
 function finishSong(){ playing=false; finished=true; $('playBtn').textContent='▶'; cancelAnimationFrame(rafId); rafId=null;
   try{ instrAudio.pause(); origAudio.pause(); }catch(_){} showControls(); showResults(); }
@@ -457,8 +469,14 @@ const AXIS=46;   // left gutter for the note-name axis
 function drawLane(t){
   const cv=$('lane'), g=cv.getContext('2d'), W=cv.clientWidth, H=cv.clientHeight; if(!W||!H) return;
   g.clearRect(0,0,W,H); g.fillStyle='rgba(2,4,7,.5)'; g.fillRect(0,0,W,H);
-  const PAST=1.6,FUT=4.2,WIN=PAST+FUT, x0=AXIS, nowX=x0+(W-x0)*(PAST/WIN);
-  const xOf=tt=>x0+(W-x0)*((tt-(t-PAST))/WIN);
+  const x0=AXIS; let xOf, nowX=-1;
+  if(reviewMode){                                   // whole song fit across the width
+    const dur=Math.max(0.1, (instrAudio&&instrAudio.duration)||(pitchData.notes.length?Math.max(...pitchData.notes.map(n=>n.t+n.dur)):10));
+    xOf=tt=>x0+(W-x0)*(tt/dur);
+  } else {
+    const PAST=1.6,FUT=4.2,WIN=PAST+FUT; nowX=x0+(W-x0)*(PAST/WIN);
+    xOf=tt=>x0+(W-x0)*((tt-(t-PAST))/WIN);
+  }
   const pad=16, yOf=m=>{ const r=(m-laneLo)/(laneHi-laneLo); return H-pad-r*(H-2*pad); };
   // ---- left axis: a labelled row per semitone (C's emphasised) ----
   g.textBaseline='middle'; g.font='10px '+LANEFONT;
@@ -501,7 +519,7 @@ function drawLane(t){
       if(bx<x0||ax>W) continue; g.strokeStyle=b.good?'#4ade80':'rgba(255,255,255,.8)';
       g.beginPath(); g.moveTo(Math.max(x0,ax),yOf(clampLane(a.midi))); g.lineTo(Math.max(x0,bx),yOf(clampLane(b.midi))); g.stroke(); } }
   // ---- live dot (no vertical playhead line) ----
-  if(curPitchMidi!=null){ const ref=act?act.midi:(laneLo+laneHi)/2;
+  if(!reviewMode && curPitchMidi!=null){ const ref=act?act.midi:(laneLo+laneHi)/2;
     const dm=good?act.midi:foldNear(curPitchMidi,ref); const y=yOf(clampLane(dm));
     g.fillStyle=good?'#4ade80':'#fff'; g.shadowColor=g.fillStyle; g.shadowBlur=good?18:14; g.beginPath(); g.arc(nowX,y,good?9:7,0,Math.PI*2); g.fill(); g.shadowBlur=0; }
   for(const e of embers){ g.globalAlpha=Math.max(0,e.life); g.fillStyle=e.c; g.fillRect(e.x,e.y,e.r,e.r); } g.globalAlpha=1;
