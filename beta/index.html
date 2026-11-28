@@ -41,6 +41,13 @@
   .pair .or{color:var(--dim);font-size:11px;letter-spacing:2px;text-transform:uppercase;margin:14px 0 2px}
   .pair .code{font:700 42px var(--mono);letter-spacing:9px;color:var(--accent)}.pair .code.waiting{color:var(--dim);opacity:.35}
   .miclink{display:inline-block;margin-top:12px;color:var(--accent);font-size:14px;text-decoration:none}
+  /* pairing is now a popup, not the opening screen */
+  .modal{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;background:rgba(3,5,8,.82);backdrop-filter:blur(3px);padding:16px}
+  .modal.show{display:flex}
+  .pair{position:relative}
+  .pairClose{position:absolute;top:12px;right:12px;width:34px;height:34px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);color:var(--dim);font-size:16px}
+  .pairClose:hover{color:var(--ink)}
+  .connBtn{background:var(--accent);color:#06231f;border-radius:999px;padding:8px 16px;font-size:14px;font-weight:700}
 
   .lead{color:var(--dim);font-size:14.5px;margin:16px 2px 16px}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
@@ -150,21 +157,24 @@
 </header>
 
 <div class="wrap">
-  <div id="chipRow" class="hidden" style="margin-bottom:6px">
-    <span class="chip" id="chip"><span class="d"></span><span id="chipText">Phone connected</span>
-      <a href="#" id="rescan" onclick="showPair(event)">change phone</a></span>
+  <div id="chipRow" style="margin-bottom:6px">
+    <span class="chip off" id="chip"><span class="d"></span><span id="chipText">No phone connected</span>
+      <a href="#" id="chipAction" onclick="openPair(event)">connect</a></span>
   </div>
 
-  <div class="pair" id="pairPanel">
-    <h2>Connect your phone 🎤</h2>
-    <p class="sub">Scan with the iMicobo app — or type the code into imicobo.com on your phone.</p>
-    <div class="qr" id="qr"></div>
-    <div class="or">code</div>
-    <div class="code waiting" id="code">– – – – – –</div>
-    <a class="miclink" id="micLink" href="/beta/mic.html" target="_blank" rel="noopener">No app? Use this device or a laptop as the mic →</a>
+  <div class="modal" id="pairModal">
+    <div class="pair" id="pairPanel">
+      <button class="pairClose" title="Close" onclick="closePair()">✕</button>
+      <h2>Connect your phone 🎤</h2>
+      <p class="sub">Scan with the iMicobo app — or type the code into imicobo.com on your phone.</p>
+      <div class="qr" id="qr"></div>
+      <div class="or">code</div>
+      <div class="code waiting" id="code">– – – – – –</div>
+      <a class="miclink" id="micLink" href="/beta/mic.html" target="_blank" rel="noopener">No app? Use this device or a laptop as the mic →</a>
+    </div>
   </div>
 
-  <div id="libraryPanel" class="hidden">
+  <div id="libraryPanel">
     <div class="lead">Pick a song to sing. Tap <b>▶</b> to preview.</div>
     <div class="grid" id="grid"></div>
     <div class="empty hidden" id="empty">No songs yet. Add a folder under <code>beta/songs/</code> with all four files.</div>
@@ -237,6 +247,8 @@ async function boot(){
     try{ $('micLink').href='/beta/mic.html?c='+myCode; }catch(_){}
     pollTimer=setInterval(pollRoom,900);
   }catch(e){ $('code').textContent='relay?'; }
+  loadLibrary();                 // songs are browsable right away
+  if(!micLive) openPair();       // prompt to connect only when no phone is paired
 }
 async function pollRoom(){
   if(!myCode) return; let s; try{ s=await (await fetch(`/session?code=${myCode}`)).json(); }catch(_){ return; }
@@ -259,17 +271,20 @@ async function connectMic(id,name){
 }
 function dropMic(){ try{ micPc&&micPc.close(); }catch(_){}
   micPc=null; micId=null; micLive=false; micStream=null; teardownPitch();
-  $('chip').classList.add('off'); $('chipText').textContent='Phone disconnected'; updateMicWarn(); }
+  setConn(false); updateMicWarn();
+  if($('playerPanel').classList.contains('hidden')) openPair();   // re-prompt, but never mid-song
+}
 function iceDone(pc){ return new Promise(res=>{ if(pc.iceGatheringState==='complete') return res();
   const c=()=>{ if(pc.iceGatheringState==='complete'){ pc.removeEventListener('icegatheringstatechange',c); res(); } };
   pc.addEventListener('icegatheringstatechange',c); setTimeout(res,4000); }); }
 
 let everConnected=false;
-function onConnected(){ $('chip').classList.remove('off'); $('chipText').textContent=micName+' connected'; $('chipRow').classList.remove('hidden'); updateMicWarn();
-  if(!everConnected){ everConnected=true; $('pairPanel').classList.add('hidden'); $('libraryPanel').classList.remove('hidden'); loadLibrary(); } }
-function showPair(ev){ if(ev) ev.preventDefault();
-  $('libraryPanel').classList.add('hidden'); $('playerPanel').classList.add('hidden');
-  $('pairPanel').classList.remove('hidden'); $('backBtn').classList.remove('hidden'); $('hdr').textContent='Connect your phone'; }
+function onConnected(){ everConnected=true; setConn(true); closePair(); updateMicWarn(); }
+function setConn(on){ const c=$('chip'); if(!c) return; c.classList.toggle('off',!on);
+  $('chipText').textContent = on ? (micName+' connected') : 'No phone connected';
+  $('chipAction').textContent = on ? 'change phone' : 'connect'; }
+function openPair(ev){ if(ev) ev.preventDefault(); $('pairModal').classList.add('show'); }
+function closePair(){ $('pairModal').classList.remove('show'); }
 
 /* ============================ LIBRARY ============================ */
 let SONGS=[], preview=null, previewId=null, song=null;
@@ -324,8 +339,8 @@ async function openSong(s){
   $('loading').classList.remove('show');
   showControls(); startPlay();                               // auto-play once loaded
 }
-function goBack(){ stopAll(); reviewMode=false; $('reviewBar').classList.remove('show'); $('loading').classList.remove('show'); if(document.fullscreenElement) document.exitFullscreen().catch(()=>{}); if(!everConnected) return;
-  $('playerPanel').classList.add('hidden'); $('pairPanel').classList.add('hidden'); $('libraryPanel').classList.remove('hidden');
+function goBack(){ stopAll(); reviewMode=false; $('reviewBar').classList.remove('show'); $('loading').classList.remove('show'); if(document.fullscreenElement) document.exitFullscreen().catch(()=>{});
+  $('playerPanel').classList.add('hidden'); $('libraryPanel').classList.remove('hidden');
   $('hdr').innerHTML='iMicobo Sing <span class="beta-tag">beta</span>'; $('backBtn').classList.add('hidden'); syncPairMini(); }
 
 function normalizePitch(pj){
@@ -573,8 +588,8 @@ function drawLane(t){
     if(bw>24){ g.fillStyle='rgba(0,0,0,.7)'; g.textAlign='center'; g.font='bold 10px '+LANEFONT;
       g.fillText(midiName(n.midi), x1+bw/2, y); g.font='10px '+LANEFONT; }   // note name on the bar
   }
-  // ---- the singer's traced line (kept on screen) ----
-  if(trail.length>1){ g.lineWidth=3; g.lineJoin='round';
+  // ---- the singer's traced line: only in Review (Dila shows the live pitch while singing) ----
+  if(reviewMode&&trail.length>1){ g.lineWidth=3; g.lineJoin='round';
     for(let i=1;i<trail.length;i++){ const a=trail[i-1],b=trail[i]; const ax=xOf(a.t),bx=xOf(b.t);
       if(bx<x0||ax>W) continue; g.strokeStyle=b.good?'#4ade80':'rgba(255,255,255,.8)';
       g.beginPath(); g.moveTo(Math.max(x0,ax),yOf(clampLane(a.midi))); g.lineTo(Math.max(x0,bx),yOf(clampLane(b.midi))); g.stroke(); } }
@@ -621,7 +636,7 @@ document.addEventListener('fullscreenchange',()=>{ const fs=!!document.fullscree
 let ctlTimer=null;
 /* corner Pair-Phone QR: visible while in the player, hidden for the review + results screens */
 function syncPairMini(){ const pm=$('pairMini'); if(!pm) return;
-  const show = everConnected && !$('playerPanel').classList.contains('hidden') && !reviewMode && $('resultOverlay').classList.contains('hidden');
+  const show = !$('playerPanel').classList.contains('hidden') && !reviewMode && $('resultOverlay').classList.contains('hidden');
   pm.classList.toggle('show',show); }
 function showControls(){ const c=$('controls'); if(!c) return; c.classList.add('show'); $('stage').style.cursor=''; syncPairMini();
   clearTimeout(ctlTimer); if(playing){ ctlTimer=setTimeout(()=>{ c.classList.remove('show'); if(playing) $('stage').style.cursor='none'; },2600); } }
