@@ -84,6 +84,30 @@
   .float{position:absolute;z-index:4;pointer-events:none;font-size:clamp(42px,6.5vw,84px);animation:fl 1.8s ease-out forwards}
   @keyframes fl{0%{transform:translateY(0) scale(.5);opacity:0}15%{opacity:.72}100%{transform:translateY(-220px) scale(1.45);opacity:0}}
 
+  /* song progress bar (thin, pinned to the very top) */
+  .songbar{position:absolute;top:0;left:0;right:0;height:4px;z-index:8;background:rgba(255,255,255,.08)}
+  .songbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));box-shadow:0 0 10px var(--accent);transition:width .15s linear}
+
+  /* per-line feedback pops (SingStar-style "Great!/Awesome!") */
+  .linepop{position:absolute;left:50%;top:40%;transform:translateX(-50%);z-index:8;font-weight:900;pointer-events:none;
+    font-size:clamp(30px,5.4vw,62px);text-shadow:0 4px 26px rgba(0,0,0,.92);animation:lp 1.15s ease-out forwards}
+  @keyframes lp{0%{opacity:0;transform:translate(-50%,14px) scale(.55)}16%{opacity:1;transform:translate(-50%,0) scale(1.12)}70%{opacity:1}100%{opacity:0;transform:translate(-50%,-34px) scale(1)}}
+  .linepop.p{color:var(--gold)}.linepop.a{color:var(--accent)}.linepop.g{color:var(--ok)}.linepop.o{color:var(--accent2)}.linepop.k{color:var(--dim)}
+
+  /* persistent corner "Pair Phone" QR */
+  .pairMini{position:absolute;left:14px;bottom:14px;z-index:7;background:rgba(5,7,10,.55);border:1px solid rgba(255,255,255,.14);
+    border-radius:12px;padding:8px;display:none;flex-direction:column;align-items:center;gap:3px;backdrop-filter:blur(4px);opacity:.82}
+  .pairMini.show{display:flex}
+  .pairMini .pm-qr{width:74px;height:74px;background:#fff;border-radius:7px;padding:4px}
+  .pairMini .pm-qr svg{width:100%;height:100%;display:block}
+  .pairMini .pm-code{font:700 13px var(--mono);letter-spacing:3px;color:var(--accent)}
+  .pairMini .pm-lbl{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim)}
+
+  /* per-line review strip on the results card */
+  .rlines{display:flex;align-items:flex-end;gap:3px;justify-content:center;height:58px;margin:4px auto 18px;max-width:min(92%,640px);overflow:hidden}
+  .rlines i{flex:1 1 0;min-width:2px;max-width:13px;border-radius:3px 3px 0 0;display:block;opacity:.9}
+  .rlabel{color:var(--dim);font-size:12px;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px}
+
   /* auto-hiding controls overlay */
   .controls{position:absolute;left:0;right:0;bottom:0;z-index:9;padding:16px 16px 12px;
     background:linear-gradient(0deg,rgba(0,0,0,.9),rgba(0,0,0,.55) 55%,rgba(0,0,0,0));
@@ -150,6 +174,8 @@
     <div class="stage" id="stage">
       <video class="bg-vid" id="bgVid" src="/beta/bg_animation/bg_animation.mp4" autoplay muted loop playsinline></video>
       <div class="bg-dim"></div>
+      <div class="songbar"><i id="songbarFill"></i></div>
+      <div class="pairMini" id="pairMini"><div class="pm-qr" id="pmQr"></div><div class="pm-code" id="pmCode">––––––</div><div class="pm-lbl">Pair phone</div></div>
       <div class="scoreBadge"><div class="n" id="scoreVal">0</div><div class="c" id="combo"></div></div>
       <div class="micwarn hidden" id="micWarn">Phone dropped — reconnect it to be scored</div>
       <div class="karaoke" id="karaoke"></div>
@@ -180,6 +206,8 @@
         <div class="resultCard">
           <div class="rscore">You scored <span id="rScore">0</span>!</div>
           <div class="rstats" id="rStats"></div>
+          <div class="rlabel" id="rLinesLbl"></div>
+          <div class="rlines" id="rLines"></div>
           <div class="rbtns">
             <button class="btn" style="background:var(--accent);color:#06231f" onclick="restartSong()">↻ Sing again</button>
             <button class="btn ref" onclick="enterReview()">📈 Review my take</button>
@@ -205,6 +233,7 @@ async function boot(){
     myCode=s.code; localStorage.setItem('imicobo.beta.code',myCode);
     $('code').textContent=myCode; $('code').classList.remove('waiting');
     try{ $('qr').innerHTML=QR.svg(`${location.origin}/beta/mic.html?c=${myCode}`,190); $('qr').classList.add('show'); }catch(_){}
+    try{ $('pmQr').innerHTML=QR.svg(`${location.origin}/beta/mic.html?c=${myCode}`,74); $('pmCode').textContent=myCode; }catch(_){}
     try{ $('micLink').href='/beta/mic.html?c='+myCode; }catch(_){}
     pollTimer=setInterval(pollRoom,900);
   }catch(e){ $('code').textContent='relay?'; }
@@ -297,7 +326,7 @@ async function openSong(s){
 }
 function goBack(){ stopAll(); reviewMode=false; $('reviewBar').classList.remove('show'); $('loading').classList.remove('show'); if(document.fullscreenElement) document.exitFullscreen().catch(()=>{}); if(!everConnected) return;
   $('playerPanel').classList.add('hidden'); $('pairPanel').classList.add('hidden'); $('libraryPanel').classList.remove('hidden');
-  $('hdr').innerHTML='iMicobo Sing <span class="beta-tag">beta</span>'; $('backBtn').classList.add('hidden'); }
+  $('hdr').innerHTML='iMicobo Sing <span class="beta-tag">beta</span>'; $('backBtn').classList.add('hidden'); syncPairMini(); }
 
 function normalizePitch(pj){
   const off=(pj&&!Array.isArray(pj)&&(pj.offset??pj.start_offset))||0;
@@ -338,11 +367,12 @@ let score=0, combo=0, bestCombo=0, rafId=null, lastT=0, pitchHist=[], trail=[], 
 let dcHz=-1, dcAt=0, usingDC=false;   // phone-side pitch over the data channel (preferred when present)
 let dilaY=null;                        // smoothed vertical position for the croc (natural glide)
 let reviewMode=false;                 // after a song: show the whole take at once
+let lineScores={};                    // lyric-line index -> accuracy 0..1 (per-line feedback + review strip)
 
 function resetGameState(){
   score=0; combo=0; bestCombo=0; finished=false; playing=false; started=false; referenceMode=false; reviewMode=false;
   $('reviewBar').classList.remove('show');
-  pitchHist=[]; trail=[]; prevActive=null; embers=[]; dilaY=null; pitchData.notes.forEach(n=>n.hit=0);
+  pitchHist=[]; trail=[]; prevActive=null; embers=[]; dilaY=null; lineScores={}; pitchData.notes.forEach(n=>n.hit=0);
   $('scoreVal').textContent='0'; $('combo').textContent=''; $('refNote').textContent='';
   $('refBtn').classList.remove('on'); $('refBtn').textContent='🎧 Hear original';
   $('playBtn').textContent='▶'; $('seek').value=0; const K=$('karaoke'); if(K) K.innerHTML=''; $('countdown').classList.remove('show'); updateTime();
@@ -402,10 +432,30 @@ function loop(){
     const dm = good ? active.midi : foldNear(sMidi,ref);
     trail.push({t,midi:clampLane(dm),good}); }
   /* keep the whole traced line on screen (no trimming) */
-  updateCue(t); updateLyrics(t); updateTime(); drawLane(t);
+  updateCue(t); updateLyrics(t); gradeLines(t); updateTime(); drawLane(t);
+}
+/* grade each lyric line as it finishes → pop a "Great!/Awesome!" label + remember for the review strip */
+function gradeLines(t){
+  if(!playing||referenceMode||!micLive) return;
+  for(let i=0;i<lrcWords.length;i++){ if(i in lineScores) continue; const l=lrcWords[i];
+    if(l.end<=t){ const r=lineAccuracy(l); lineScores[i]=r; if(r!=null) popLine(r); } }
+}
+function lineAccuracy(l){
+  const ns=pitchData.notes.filter(n=> n.t+n.dur>l.start+0.02 && n.t<l.end-0.02);
+  if(!ns.length) return null;
+  return ns.reduce((a,n)=>a+Math.min(1,n.hit/(n.dur*NEED)),0)/ns.length;
+}
+function popLine(r){ let txt,cls;
+  if(r>=0.90){txt='PERFECT!';cls='p';} else if(r>=0.74){txt='Awesome!';cls='a';}
+  else if(r>=0.55){txt='Great!';cls='g';} else if(r>=0.35){txt='Good';cls='o';}
+  else if(r>=0.14){txt='OK';cls='k';} else return;   // don't neg a missed line
+  const stage=$('stage'); if(!stage) return;
+  const el=document.createElement('div'); el.className='linepop '+cls; el.textContent=txt;
+  stage.appendChild(el); setTimeout(()=>el.remove(),1200);
 }
 function semitoneDiff(a,b){ let d=Math.abs(a-b)%12; return Math.min(d,12-d); }
-function updateTime(){ const cur=songTime(), dur=instrAudio?instrAudio.duration||0:0; $('time').textContent=fmt(cur)+' / '+fmt(dur); if(!dragging) $('seek').value=cur; }
+function updateTime(){ const cur=songTime(), dur=instrAudio?instrAudio.duration||0:0; $('time').textContent=fmt(cur)+' / '+fmt(dur); if(!dragging) $('seek').value=cur;
+  const f=$('songbarFill'); if(f) f.style.width=(dur>0?Math.min(100,cur/dur*100):0)+'%'; }
 let dragging=false; $('seek').addEventListener('pointerdown',()=>dragging=true); $('seek').addEventListener('pointerup',()=>dragging=false);
 function fmt(s){ s=Math.max(0,s|0); return (s/60|0)+':'+String(s%60).padStart(2,'0'); }
 
@@ -425,8 +475,8 @@ function updateCue(t){ let num=0; if(playing&&!referenceMode){ for(const c of cu
 
 /* ---- review: whole performance on one screen ---- */
 function enterReview(){ reviewMode=true; $('resultOverlay').classList.add('hidden');
-  const K=$('karaoke'); if(K) K.innerHTML=''; $('reviewBar').classList.add('show'); drawLane(0); }
-function exitReview(){ reviewMode=false; $('reviewBar').classList.remove('show'); $('resultOverlay').classList.remove('hidden'); }
+  const K=$('karaoke'); if(K) K.innerHTML=''; $('reviewBar').classList.add('show'); syncPairMini(); drawLane(0); }
+function exitReview(){ reviewMode=false; $('reviewBar').classList.remove('show'); $('resultOverlay').classList.remove('hidden'); syncPairMini(); }
 
 function onSongEnded(){ if(!referenceMode) finishSong(); }
 function finishSong(){ playing=false; finished=true; $('playBtn').textContent='▶'; cancelAnimationFrame(rafId); rafId=null;
@@ -441,7 +491,21 @@ function showResults(){
   const pct=base.length?Math.round(100*base.reduce((a,n)=>a+Math.min(1,n.hit/(n.dur*NEED)),0)/base.length):0;
   $('rScore').textContent=Math.round(score).toLocaleString();
   $('rStats').textContent=micLive?`${pct}% on pitch · best combo ${bestCombo}`:'No mic was connected — nothing to score.';
-  $('resultOverlay').classList.remove('hidden'); if(micLive&&pct>=55){ burst(); setTimeout(burst,350); setTimeout(burst,700); }
+  buildLineStrip();
+  $('resultOverlay').classList.remove('hidden'); $('pairMini').classList.remove('show');
+  if(micLive&&pct>=45){ burst(); setTimeout(burst,330); setTimeout(burst,660);
+    if(pct>=80){ setTimeout(burst,1000); setTimeout(burst,1350); } }   // bigger party for a great take
+}
+/* compact bar-per-line strip so you see how you did line by line without leaving the score */
+function buildLineStrip(){
+  const el=$('rLines'), lbl=$('rLinesLbl'); if(!el) return;
+  const graded=lrcWords.map((l,i)=>lineScores[i]).filter(r=>r!=null);
+  if(!micLive||!graded.length){ el.innerHTML=''; if(lbl) lbl.textContent=''; return; }
+  if(lbl) lbl.textContent='Line by line';
+  el.innerHTML=lrcWords.map((l,i)=>{ const r=lineScores[i]; if(r==null) return '';
+    const h=Math.round(7+Math.max(0,Math.min(1,r))*48);
+    const col=r>=.74?'var(--gold)':r>=.55?'var(--ok)':r>=.35?'var(--accent2)':'var(--bad)';
+    return `<i style="height:${h}px;background:${col}" title="${esc(l.text)}"></i>`; }).join('');
 }
 
 /* ============================ PITCH TRACK ============================ */
@@ -555,7 +619,11 @@ document.addEventListener('fullscreenchange',()=>{ const fs=!!document.fullscree
   requestAnimationFrame(()=>{ fitLane(); drawLane(songTime()-(pitchData.offset||0)-LAT); }); showControls(); });
 
 let ctlTimer=null;
-function showControls(){ const c=$('controls'); if(!c) return; c.classList.add('show'); $('stage').style.cursor='';
+/* corner Pair-Phone QR: visible while in the player, hidden for the review + results screens */
+function syncPairMini(){ const pm=$('pairMini'); if(!pm) return;
+  const show = everConnected && !$('playerPanel').classList.contains('hidden') && !reviewMode && $('resultOverlay').classList.contains('hidden');
+  pm.classList.toggle('show',show); }
+function showControls(){ const c=$('controls'); if(!c) return; c.classList.add('show'); $('stage').style.cursor=''; syncPairMini();
   clearTimeout(ctlTimer); if(playing){ ctlTimer=setTimeout(()=>{ c.classList.remove('show'); if(playing) $('stage').style.cursor='none'; },2600); } }
 $('stage').addEventListener('mousemove',showControls);
 $('stage').addEventListener('pointerdown',showControls);
