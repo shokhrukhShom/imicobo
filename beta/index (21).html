@@ -529,19 +529,22 @@ function gradeLines(t){
   if(!playing||referenceMode) return;
   for(const p of players){ if(!p.live) continue;
     for(let i=0;i<lrcWords.length;i++){ if(i in p.lineScores) continue; const l=lrcWords[i];
-      if(l.end<=t){ const r=lineAccuracy(l,p); p.lineScores[i]=r; if(r!=null && players.length===1) popLine(r); } } }
+      if(l.end<=t){ const r=lineAccuracy(l,p); p.lineScores[i]=r; if(r!=null) popLine(r,p); } } }
 }
 function lineAccuracy(l,p){
   const r=[]; for(let i=0;i<pitchData.notes.length;i++){ const n=pitchData.notes[i];
     if(n.t+n.dur>l.start+0.02 && n.t<l.end-0.02) r.push(Math.min(1,(p.hits[i]||0)/(n.dur*NEED))); }
   if(!r.length) return null; return r.reduce((a,b)=>a+b,0)/r.length;
 }
-function popLine(r){ let txt,cls;
-  if(r>=0.90){txt='PERFECT!';cls='p';} else if(r>=0.74){txt='Awesome!';cls='a';}
-  else if(r>=0.55){txt='Great!';cls='g';} else if(r>=0.35){txt='Good';cls='o';}
-  else if(r>=0.14){txt='OK';cls='k';} else return;
+function popLine(r,p){ let txt;
+  if(r>=0.90) txt='PERFECT!'; else if(r>=0.74) txt='Awesome!'; else if(r>=0.55) txt='Great!';
+  else if(r>=0.35) txt='Nice!'; else if(r>=0.14) txt='OK!'; else return;
   const stage=$('stage'); if(!stage) return;
-  const el=document.createElement('div'); el.className='linepop '+cls; el.textContent=txt;
+  const el=document.createElement('div'); el.className='linepop'; el.textContent=txt;
+  el.style.color = p ? p.color : 'var(--accent)';                 // pop matches the singer's colour
+  if(p && players.length>1){ const i=players.indexOf(p), n=players.length;
+    el.style.left=(50 + (i-(n-1)/2)*20)+'%'; el.style.top=(34 + (i%2)*12)+'%';
+    el.style.fontSize='clamp(22px,3.4vw,42px)'; }                 // spread + shrink so 2-6 don't collide
   stage.appendChild(el); setTimeout(()=>el.remove(),1200);
 }
 
@@ -652,12 +655,10 @@ function drawLane(t){
     g.shadowColor=pitchColor(n.midi,1); g.shadowBlur=5+f*18;
     g.fillStyle=pitchColor(n.midi,.9); rr(g,x1,y-h/2,bw,h,6); g.fill(); g.shadowBlur=0;
     if(ratio>0){ const hw=bw*ratio;
-      const grd=g.createLinearGradient(x1,0,x1+hw,0);
-      grd.addColorStop(0,'rgba(35,18,8,.96)'); grd.addColorStop(.65,'rgba(130,55,20,.92)'); grd.addColorStop(1,'rgba(255,175,45,1)');
-      g.fillStyle=grd; rr(g,x1,y-h/2,hw,h,6); g.fill();
-      g.shadowColor='#ff8a1f'; g.shadowBlur=20; g.fillStyle='rgba(255,220,140,.95)'; g.fillRect(x1+hw-2,y-h/2,3,h); g.shadowBlur=0;
-      const emit=playing&&idx===ai&&players.some(p=>p.curMidi!=null&&semitoneDiff(p.curMidi,n.midi)<=TOL);
-      if(emit){ for(let k=0;k<4;k++) embers.push({x:x1+hw,y:y+(Math.random()-.5)*h,vx:(Math.random()-.3)*2,vy:-Math.random()*2.6-0.8,r:Math.random()*3+1.8,c:['#ffb02e','#ffd98a','#ff5a2a','#fff0b0'][k%4],life:1}); }
+      // sung-correctly portion becomes HOLLOW — cleared to just a glowing outline
+      g.save(); g.globalCompositeOperation='destination-out'; rr(g,x1,y-h/2,hw,h,6); g.fill(); g.restore();
+      g.lineWidth=2; g.strokeStyle=pitchColor(n.midi,.95); g.shadowColor=pitchColor(n.midi,1); g.shadowBlur=6;
+      rr(g,x1+1,y-h/2+1,Math.max(1,hw-2),h-2,5); g.stroke(); g.shadowBlur=0;
     }
     if(bw>24){ g.fillStyle='rgba(0,0,0,.7)'; g.textAlign='center'; g.font='bold 10px '+LANEFONT; g.fillText(midiName(n.midi), x1+bw/2, y); g.font='10px '+LANEFONT; }
   }
